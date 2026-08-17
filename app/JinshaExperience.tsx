@@ -212,7 +212,7 @@ function IntroArchitecture({ quality }: { quality: Quality }) {
     {platforms.map((platform, index) => <group key={index} position={[platform.x, platform.y, platform.z]}>
       <mesh>
         <boxGeometry args={[platform.w, 0.52, platform.d]} />
-        <meshStandardMaterial color="#102321" emissive={index % 2 ? "#274a45" : "#4c3815"} emissiveIntensity={0.18} roughness={0.86} metalness={0.18} />
+        <meshToonMaterial color="#102321" emissive={index % 2 ? "#274a45" : "#4c3815"} emissiveIntensity={0.16} />
       </mesh>
       <mesh position={[0, 0.31, 0]}>
         <boxGeometry args={[platform.w * 0.82, 0.035, platform.d * 0.78]} />
@@ -220,24 +220,44 @@ function IntroArchitecture({ quality }: { quality: Quality }) {
       </mesh>
       {platform.kind === "ring" && <mesh position={[0, 2.1, 0]} rotation={[Math.PI / 2, 0, 0]}>
         <torusGeometry args={[1.45 - index * 0.07, 0.22, 10, 48]} />
-        <meshStandardMaterial color="#d8a94a" emissive="#8b5d14" emissiveIntensity={0.7} metalness={0.54} roughness={0.34} />
+        <meshToonMaterial color="#d8a94a" emissive="#8b5d14" emissiveIntensity={0.58} />
       </mesh>}
       {platform.kind === "mask" && <group position={[0, 1.9, 0]}>
-        <mesh><boxGeometry args={[2.7, 0.36, 0.34]} /><meshStandardMaterial color="#c9983b" emissive="#785014" emissiveIntensity={0.55} /></mesh>
-        <mesh position={[-1.15, -0.8, 0]}><boxGeometry args={[0.34, 1.7, 0.34]} /><meshStandardMaterial color="#c9983b" emissive="#785014" emissiveIntensity={0.55} /></mesh>
-        <mesh position={[1.15, -0.8, 0]}><boxGeometry args={[0.34, 1.7, 0.34]} /><meshStandardMaterial color="#c9983b" emissive="#785014" emissiveIntensity={0.55} /></mesh>
+        <mesh><boxGeometry args={[2.7, 0.36, 0.34]} /><meshToonMaterial color="#c9983b" emissive="#785014" emissiveIntensity={0.45} /></mesh>
+        <mesh position={[-1.15, -0.8, 0]}><boxGeometry args={[0.34, 1.7, 0.34]} /><meshToonMaterial color="#c9983b" emissive="#785014" emissiveIntensity={0.45} /></mesh>
+        <mesh position={[1.15, -0.8, 0]}><boxGeometry args={[0.34, 1.7, 0.34]} /><meshToonMaterial color="#c9983b" emissive="#785014" emissiveIntensity={0.45} /></mesh>
       </group>}
       {platform.kind === "pillar" && <group position={[0, 1.45, 0]}>
-        <mesh rotation={[0, 0, -0.12]}><boxGeometry args={[0.56, 3, 0.56]} /><meshStandardMaterial color="#6f9d94" emissive="#244842" emissiveIntensity={0.5} /></mesh>
-        <mesh position={[1, 0.2, 0]} rotation={[0, 0, 0.16]}><boxGeometry args={[0.46, 2.4, 0.46]} /><meshStandardMaterial color="#6f9d94" emissive="#244842" emissiveIntensity={0.5} /></mesh>
+        <mesh rotation={[0, 0, -0.12]}><boxGeometry args={[0.56, 3, 0.56]} /><meshToonMaterial color="#6f9d94" emissive="#244842" emissiveIntensity={0.42} /></mesh>
+        <mesh position={[1, 0.2, 0]} rotation={[0, 0, 0.16]}><boxGeometry args={[0.46, 2.4, 0.46]} /><meshToonMaterial color="#6f9d94" emissive="#244842" emissiveIntensity={0.42} /></mesh>
       </group>}
     </group>)}
     {[0, 1, 2].map((index) => <mesh key={`floor-${index}`} position={[0, -4.5 + index * 0.18, -7 - index * 9]}>
       <boxGeometry args={[7.4 - index * 0.8, 0.12, 8]} />
-      <meshStandardMaterial color="#0b1818" emissive="#1d3935" emissiveIntensity={0.12} roughness={0.94} />
+      <meshToonMaterial color="#0b1818" emissive="#1d3935" emissiveIntensity={0.1} />
     </mesh>)}
+    <IntroSunbirds />
     <pointLight position={[0, 2, -3]} color="#d8a94a" intensity={quality === "high" ? 20 : 12} distance={18} />
     <pointLight position={[7, 1, -12]} color="#6ba69b" intensity={quality === "high" ? 14 : 8} distance={18} />
+  </group>;
+}
+
+function IntroSunbirds() {
+  const orbit = useRef<THREE.Group>(null);
+  useFrame(({ clock }) => {
+    if (!orbit.current) return;
+    orbit.current.rotation.z = clock.elapsedTime * 0.09;
+    orbit.current.rotation.y = Math.sin(clock.elapsedTime * 0.18) * 0.1;
+  });
+  return <group ref={orbit} position={[0, 0.25, -2.65]}>
+    {[0, 1, 2, 3].map((index) => {
+      const angle = index * Math.PI / 2 + Math.PI / 4;
+      return <group key={index} position={[Math.cos(angle) * 3.05, Math.sin(angle) * 2.1, 0]} rotation={[0, 0, angle + Math.PI / 2]} scale={0.72}>
+        <mesh scale={[0.55, 0.2, 0.18]}><sphereGeometry args={[1, 10, 7]} /><meshToonMaterial color="#ddb45a" emissive="#8f5d13" emissiveIntensity={0.9} /></mesh>
+        <mesh position={[-0.48, 0, 0]} rotation={[0, 0, -0.42]} scale={[0.72, 0.08, 0.22]}><boxGeometry /><meshToonMaterial color="#f0ce77" emissive="#8f5d13" emissiveIntensity={0.72} /></mesh>
+        <mesh position={[0.48, 0, 0]} rotation={[0, 0, 0.42]} scale={[0.72, 0.08, 0.22]}><boxGeometry /><meshToonMaterial color="#f0ce77" emissive="#8f5d13" emissiveIntensity={0.72} /></mesh>
+      </group>;
+    })}
   </group>;
 }
 
@@ -245,17 +265,17 @@ function SpeedLines({ quality, controls }: { quality: Quality; controls: RefObje
   const mesh = useRef<THREE.InstancedMesh>(null);
   const material = useRef<THREE.MeshBasicMaterial>(null);
   const intensity = useRef(0);
-  const count = quality === "high" ? 72 : 34;
+  const count = quality === "high" ? 28 : 14;
   const dummy = useMemo(() => new THREE.Object3D(), []);
   const lines = useMemo(() => Array.from({ length: count }, (_, index) => {
     const angle = index * 2.39996;
-    const radius = 2.5 + ((index * 37) % 100) / 100 * 12;
+    const radius = 4.8 + ((index * 37) % 100) / 100 * 10;
     return {
       x: Math.cos(angle) * radius,
       y: Math.sin(angle) * radius * 0.62 + 1.2,
       z: -30 + ((index * 53) % 100) / 100 * 37,
       speed: 0.75 + (index % 7) * 0.08,
-      length: 2.4 + (index % 6) * 0.72,
+      length: 1.4 + (index % 5) * 0.52,
     };
   }), [count]);
 
@@ -264,13 +284,13 @@ function SpeedLines({ quality, controls }: { quality: Quality; controls: RefObje
     intensity.current = THREE.MathUtils.damp(intensity.current, target, target ? 7.5 : 4.2, delta);
     if (!mesh.current || !material.current) return;
     mesh.current.visible = intensity.current > 0.012;
-    material.current.opacity = intensity.current * 0.64;
+    material.current.opacity = intensity.current * 0.34;
     lines.forEach((line, index) => {
       line.z += delta * (12 + intensity.current * 54) * line.speed;
       if (line.z > 8) line.z = -30 - (index % 9);
       dummy.position.set(line.x, line.y, line.z);
       dummy.rotation.set(-line.y * 0.008, line.x * 0.008, 0);
-      dummy.scale.set(1 + intensity.current * 0.8, 1 + intensity.current * 0.8, line.length * (0.5 + intensity.current * 1.9));
+      dummy.scale.set(1 + intensity.current * 0.5, 1 + intensity.current * 0.5, line.length * (0.45 + intensity.current * 1.45));
       dummy.updateMatrix();
       mesh.current!.setMatrixAt(index, dummy.matrix);
     });
@@ -278,7 +298,7 @@ function SpeedLines({ quality, controls }: { quality: Quality; controls: RefObje
   });
 
   return <instancedMesh ref={mesh} args={[undefined, undefined, count]} frustumCulled={false}>
-    <boxGeometry args={[0.018, 0.018, 1]} />
+    <boxGeometry args={[0.012, 0.012, 1]} />
     <meshBasicMaterial ref={material} color="#ffd36e" transparent opacity={0} depthWrite={false} blending={THREE.AdditiveBlending} />
   </instancedMesh>;
 }
@@ -291,7 +311,7 @@ function ArtifactVisual({ artifact, active }: { artifact: Artifact; active: bool
     group.current.rotation.y += delta * (active ? 0.36 : 0.08);
     group.current.position.y = 0.5 + Math.sin(clock.elapsedTime * 0.7 + artifact.distance) * 0.22;
   });
-  const material = <meshStandardMaterial color={color} emissive={color} emissiveIntensity={active ? 2.8 : 0.42} metalness={0.28} roughness={0.52} />;
+  const material = <meshToonMaterial color={color} emissive={color} emissiveIntensity={active ? 1.8 : 0.24} />;
 
   return (
     <group position={[artifact.side, 0.5, -artifact.distance]}>
@@ -349,10 +369,10 @@ function Xiyu({ playerRef, controls, started }: { playerRef: RefObject<THREE.Gro
   });
   return (
     <group ref={playerRef}>
-      <mesh scale={[0.62, 0.34, 1.25]}><sphereGeometry args={[1, 24, 16]} /><meshStandardMaterial color="#e8b44c" emissive="#a55412" emissiveIntensity={2.2} metalness={0.22} roughness={0.38} /></mesh>
-      <mesh position={[0, 0.16, -1.05]} scale={[0.38, 0.38, 0.38]}><sphereGeometry args={[1, 18, 12]} /><meshStandardMaterial color="#f1c564" emissive="#a55412" emissiveIntensity={1.4} /></mesh>
-      <mesh ref={leftWing} position={[-1.22, 0.05, 0.05]} scale={[1.55, 0.07, 0.62]}><boxGeometry /><meshStandardMaterial color="#e8dfc4" emissive="#d8a94a" emissiveIntensity={1.1} /></mesh>
-      <mesh ref={rightWing} position={[1.22, 0.05, 0.05]} scale={[1.55, 0.07, 0.62]}><boxGeometry /><meshStandardMaterial color="#e8dfc4" emissive="#d8a94a" emissiveIntensity={1.1} /></mesh>
+      <mesh scale={[0.62, 0.34, 1.25]}><sphereGeometry args={[1, 24, 16]} /><meshToonMaterial color="#d9a43f" emissive="#75400b" emissiveIntensity={1.15} /></mesh>
+      <mesh position={[0, 0.16, -1.05]} scale={[0.38, 0.38, 0.38]}><sphereGeometry args={[1, 18, 12]} /><meshToonMaterial color="#efc66a" emissive="#75400b" emissiveIntensity={0.8} /></mesh>
+      <mesh ref={leftWing} position={[-1.22, 0.05, 0.05]} scale={[1.55, 0.07, 0.62]}><boxGeometry /><meshToonMaterial color="#e8dfc4" emissive="#8b671f" emissiveIntensity={0.55} /></mesh>
+      <mesh ref={rightWing} position={[1.22, 0.05, 0.05]} scale={[1.55, 0.07, 0.62]}><boxGeometry /><meshToonMaterial color="#e8dfc4" emissive="#8b671f" emissiveIntensity={0.55} /></mesh>
       <mesh position={[-0.95, 0, 2.2]} scale={[0.07, 0.07, 2.8]}><boxGeometry /><meshBasicMaterial color="#ff8b32" transparent opacity={0.46} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
       <mesh position={[0.95, 0, 2.2]} scale={[0.07, 0.07, 2.8]}><boxGeometry /><meshBasicMaterial color="#ff8b32" transparent opacity={0.46} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
       <group ref={halo}>
@@ -541,6 +561,7 @@ export function JinshaExperience() {
         <h1 id="experience-title"><span>羽见</span><span>千年</span></h1>
         <p className="intro-subtitle">金沙沉浸式数字体验</p>
         <div className="intro-entry"><p className="intro-copy">跟随曦羽穿过自然、文明与记忆，在流动的光中重新看见金沙。</p><button className="enter-button" onClick={enterExperience}><span>进入体验</span><span aria-hidden="true">→</span></button></div>
+        <div className="intro-route" aria-hidden="true"><span>自然之源</span><i /><span>文明之光</span><i /><span>记忆重生</span></div>
       </section>}
 
       {entered && <>
