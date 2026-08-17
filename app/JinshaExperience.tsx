@@ -1,8 +1,12 @@
 "use client";
 
 import { Canvas, useFrame } from "@react-three/fiber";
+import { useGSAP } from "@gsap/react";
+import gsap from "gsap";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import * as THREE from "three";
+
+gsap.registerPlugin(useGSAP);
 
 type Quality = "high" | "eco";
 type ArtifactKind = "tree" | "solar" | "mask" | "jade" | "bronze" | "altar" | "fragments" | "gate";
@@ -10,6 +14,7 @@ type ArtifactKind = "tree" | "solar" | "mask" | "jade" | "bronze" | "altar" | "f
 type Artifact = {
   id: string;
   name: string;
+  voice: string;
   caption: string;
   assetKey: string;
   distance: number;
@@ -32,50 +37,95 @@ const ATMOSPHERE_COLORS = ["#061313", "#160d06", "#0c0717"] as const;
 const FOG_COLORS = ["#0a1d1c", "#241408", "#170d25"] as const;
 
 const ARTIFACTS: Artifact[] = [
-  { id: "ancient-tree", name: "中央古树", caption: "生命从湿润的土壤生长，古蜀先民在自然中辨认时间与秩序。", assetKey: "Stage01_AncientTree", distance: 30, stage: 0, kind: "tree", side: -4.2 },
-  { id: "solar-clue", name: "太阳神鸟线索", caption: "四鸟绕日的结构化作第一束金光，引导曦羽进入文明深处。", assetKey: "Stage01_SolarFragment", distance: 58, stage: 0, kind: "solar", side: 3.8 },
-  { id: "golden-mask", name: "黄金面具", caption: "薄金被塑成人的面孔，凝视穿越祭祀空间与今日的我们。", assetKey: "Stage02_GoldenMask", distance: 92, stage: 1, kind: "mask", side: -4.3 },
-  { id: "jade-bi", name: "玉璧", caption: "温润的环形结构被放大为航道，身体从古蜀礼仪的尺度中穿过。", assetKey: "Stage02_JadeBi", distance: 116, stage: 1, kind: "jade", side: 4.1 },
-  { id: "bronze-pattern", name: "青铜纹样", caption: "青铜表面的节律被转译为空间界面，旧有纹理成为新的坐标。", assetKey: "Stage02_BronzePattern", distance: 140, stage: 1, kind: "bronze", side: -4.5 },
-  { id: "altar", name: "古蜀祭祀空间", caption: "层叠的平台不是神庙复原，而是对金沙祭祀关系的抽象表达。", assetKey: "Stage02_Altar", distance: 160, stage: 1, kind: "altar", side: 3.9 },
-  { id: "memory-fragments", name: "文明记忆碎片", caption: "面具、玉璧与青铜纹样被拆解成光片，在飞行中重新建立联系。", assetKey: "Stage03_MemoryFragments", distance: 188, stage: 2, kind: "fragments", side: -3.4 },
-  { id: "solar-rebirth", name: "太阳神鸟重组", caption: "离散的四鸟轨迹逐渐闭合，文明符号从记忆中再次显现。", assetKey: "Stage03_SolarBirdFragment", distance: 214, stage: 2, kind: "solar", side: 3.2 },
-  { id: "civilization-gate", name: "文明之门", caption: "旅程在完整的太阳神鸟结构前收束，也从这里朝向新的讲述。", assetKey: "Stage03_CivilizationGate", distance: 234, stage: 2, kind: "gate", side: 0 },
+  { id: "ancient-tree", name: "中央古树", voice: "我从湿润的土地里，记住了第一场日出。", caption: "生命从土壤生长，古蜀先民也在自然的循环中辨认时间与秩序。", assetKey: "Stage01_AncientTree", distance: 30, stage: 0, kind: "tree", side: -4.2 },
+  { id: "solar-clue", name: "太阳神鸟线索", voice: "别急着追逐我的光，先看四道轨迹如何相遇。", caption: "四鸟绕日的结构化作第一束金光，引导曦羽进入文明深处。", assetKey: "Stage01_SolarFragment", distance: 58, stage: 0, kind: "solar", side: 3.8 },
+  { id: "golden-mask", name: "黄金面具", voice: "我没有开口，却凝视了三千年的来者。", caption: "薄金被塑成人的面孔，这道目光穿越祭祀空间，也落向今天的我们。", assetKey: "Stage02_GoldenMask", distance: 92, stage: 1, kind: "mask", side: -4.3 },
+  { id: "jade-bi", name: "玉璧", voice: "穿过我吧，圆环的另一侧仍是时间。", caption: "温润的环形结构被放大为航道，让身体进入古蜀礼仪的尺度。", assetKey: "Stage02_JadeBi", distance: 116, stage: 1, kind: "jade", side: 4.1 },
+  { id: "bronze-pattern", name: "青铜纹样", voice: "沿着我的纹路，旧日的节律仍在回响。", caption: "青铜表面的秩序被转译为空间界面，旧有纹理成为新的坐标。", assetKey: "Stage02_BronzePattern", distance: 140, stage: 1, kind: "bronze", side: -4.5 },
+  { id: "altar", name: "古蜀祭祀空间", voice: "层层靠近，不是为了抵达高处，而是靠近敬畏。", caption: "层叠的平台不是神庙复原，而是对金沙祭祀关系的抽象表达。", assetKey: "Stage02_Altar", distance: 160, stage: 1, kind: "altar", side: 3.9 },
+  { id: "memory-fragments", name: "文明记忆碎片", voice: "你看见的破碎，也许只是记忆换了一种形状。", caption: "面具、玉璧与青铜纹样被拆解成光片，在飞行中重新建立联系。", assetKey: "Stage03_MemoryFragments", distance: 188, stage: 2, kind: "fragments", side: -3.4 },
+  { id: "solar-rebirth", name: "太阳神鸟重组", voice: "当四道光再次闭合，我便从记忆中归来。", caption: "离散的四鸟轨迹逐渐闭合，文明符号从记忆中再次显现。", assetKey: "Stage03_SolarBirdFragment", distance: 214, stage: 2, kind: "solar", side: 3.2 },
+  { id: "civilization-gate", name: "文明之门", voice: "这不是旅程的尽头，是你下一次讲述的入口。", caption: "完整的太阳神鸟结构在这里收束，也从这里朝向新的讲述。", assetKey: "Stage03_CivilizationGate", distance: 234, stage: 2, kind: "gate", side: 0 },
 ];
 
 function useAmbientSound() {
-  const graph = useRef<{ context: AudioContext; gain: GainNode; oscillators: OscillatorNode[] } | null>(null);
+  const graph = useRef<{ context: AudioContext; gain: GainNode; oscillators: OscillatorNode[]; timer: number | null } | null>(null);
   const [muted, setMuted] = useState(false);
 
   const start = useCallback(() => {
-    if (graph.current || typeof window === "undefined") return;
+    if (graph.current || typeof window === "undefined") {
+      if (graph.current?.context.state === "suspended") void graph.current.context.resume();
+      return;
+    }
     const AudioContextClass = window.AudioContext;
     if (!AudioContextClass) return;
     const context = new AudioContextClass();
     const gain = context.createGain();
     const filter = context.createBiquadFilter();
     filter.type = "lowpass";
-    filter.frequency.value = 210;
-    gain.gain.value = 0.026;
+    filter.frequency.value = 480;
+    filter.Q.value = 0.72;
+    gain.gain.value = 0.058;
     filter.connect(gain).connect(context.destination);
-    const oscillators = [55, 82.5].map((frequency, index) => {
+    const oscillators = [73.42, 110, 164.81].map((frequency, index) => {
       const oscillator = context.createOscillator();
-      oscillator.type = index === 0 ? "sine" : "triangle";
+      oscillator.type = index === 1 ? "triangle" : "sine";
       oscillator.frequency.value = frequency;
       const voiceGain = context.createGain();
-      voiceGain.gain.value = index === 0 ? 0.7 : 0.16;
+      voiceGain.gain.value = [0.24, 0.085, 0.026][index];
       oscillator.connect(voiceGain).connect(filter);
       oscillator.start();
       return oscillator;
     });
-    graph.current = { context, gain, oscillators };
+
+    const lfo = context.createOscillator();
+    const lfoGain = context.createGain();
+    lfo.type = "sine";
+    lfo.frequency.value = 0.055;
+    lfoGain.gain.value = 110;
+    lfo.connect(lfoGain).connect(filter.frequency);
+    lfo.start();
+    oscillators.push(lfo);
+    graph.current = { context, gain, oscillators, timer: null };
+
+    const notes = [293.66, 329.63, 440, 493.88, 587.33];
+    let step = 0;
+    const playChime = () => {
+      const audio = graph.current;
+      if (!audio || audio.context.state === "closed") return;
+      const now = audio.context.currentTime;
+      const note = notes[step % notes.length] * (step % 4 === 3 ? 0.5 : 1);
+      step += 1;
+      const voice = audio.context.createOscillator();
+      const overtone = audio.context.createOscillator();
+      const voiceGain = audio.context.createGain();
+      const pan = audio.context.createStereoPanner();
+      voice.type = "sine";
+      overtone.type = "sine";
+      voice.frequency.value = note;
+      overtone.frequency.value = note * 2.01;
+      pan.pan.value = Math.sin(step * 2.2) * 0.58;
+      voiceGain.gain.setValueAtTime(0.0001, now);
+      voiceGain.gain.exponentialRampToValueAtTime(0.12, now + 0.045);
+      voiceGain.gain.exponentialRampToValueAtTime(0.0001, now + 3.8);
+      voice.connect(voiceGain);
+      overtone.connect(voiceGain);
+      voiceGain.connect(pan).connect(audio.gain);
+      voice.start(now);
+      overtone.start(now);
+      voice.stop(now + 4);
+      overtone.stop(now + 4);
+      audio.timer = window.setTimeout(playChime, 4600 + (step % 3) * 1200);
+    };
+    graph.current.timer = window.setTimeout(playChime, 900);
+    void context.resume();
   }, []);
 
   const toggle = useCallback(() => {
     setMuted((previous) => {
       const next = !previous;
       const audio = graph.current;
-      if (audio) audio.gain.gain.setTargetAtTime(next ? 0 : 0.026, audio.context.currentTime, 0.08);
+      if (audio) audio.gain.gain.setTargetAtTime(next ? 0 : 0.058, audio.context.currentTime, 0.12);
       return next;
     });
   }, []);
@@ -83,8 +133,12 @@ function useAmbientSound() {
   useEffect(() => () => {
     const audio = graph.current;
     if (audio) {
-      audio.oscillators.forEach((oscillator) => oscillator.stop());
-      void audio.context.close();
+      graph.current = null;
+      if (audio.timer !== null) window.clearTimeout(audio.timer);
+      audio.oscillators.forEach((oscillator) => {
+        try { oscillator.stop(); } catch { /* the development hot reload may already have stopped this voice */ }
+      });
+      if (audio.context.state !== "closed") void audio.context.close().catch(() => undefined);
     }
   }, []);
 
@@ -481,10 +535,12 @@ function FlightScene({ started, paused, quality, controls, resetKey, onTelemetry
 }
 
 function TouchButton({ label, direction, setControl }: { label: string; direction: keyof Controls; setControl: (direction: keyof Controls, active: boolean) => void }) {
+  if (direction === "boost") return <button className="touch-key touch-key--boost" aria-label="切换疾飞模式" onClick={() => setControl(direction, true)}>{label}</button>;
   return <button className={`touch-key touch-key--${direction}`} aria-label={label} onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); setControl(direction, true); }} onPointerUp={() => setControl(direction, false)} onPointerCancel={() => setControl(direction, false)}>{label}</button>;
 }
 
 export function JinshaExperience() {
+  const experienceRef = useRef<HTMLElement>(null);
   const [entered, setEntered] = useState(false);
   const [paused, setPaused] = useState(false);
   const [quality, setQuality] = useState<Quality>("high");
@@ -502,7 +558,7 @@ export function JinshaExperience() {
   }, []);
 
   useEffect(() => {
-    const keyMap: Record<string, keyof Controls> = { KeyA: "left", ArrowLeft: "left", KeyD: "right", ArrowRight: "right", KeyW: "up", ArrowUp: "up", KeyS: "down", ArrowDown: "down", ShiftLeft: "boost", ShiftRight: "boost" };
+    const keyMap: Record<string, keyof Controls> = { KeyA: "left", ArrowLeft: "left", KeyD: "right", ArrowRight: "right", KeyW: "up", ArrowUp: "up", KeyS: "down", ArrowDown: "down" };
     const mapKey = (code: string): keyof Controls | null => keyMap[code] ?? null;
     const update = (event: KeyboardEvent, active: boolean) => {
       const key = mapKey(event.code);
@@ -513,12 +569,22 @@ export function JinshaExperience() {
     };
     const onDown = (event: KeyboardEvent) => {
       if (event.code === "Escape" && entered) { setPaused((value) => !value); return; }
+      if ((event.code === "ShiftLeft" || event.code === "ShiftRight") && entered) {
+        event.preventDefault();
+        if (event.repeat) return;
+        const next = !controls.current.boost;
+        controls.current.boost = next;
+        setBoosting(next);
+        return;
+      }
       update(event, true);
     };
     const onUp = (event: KeyboardEvent) => update(event, false);
     const releaseControls = () => {
-      controls.current = { left: false, right: false, up: false, down: false, boost: false };
-      setBoosting(false);
+      controls.current.left = false;
+      controls.current.right = false;
+      controls.current.up = false;
+      controls.current.down = false;
     };
     window.addEventListener("keydown", onDown);
     window.addEventListener("keyup", onUp);
@@ -528,8 +594,13 @@ export function JinshaExperience() {
 
   const reportTelemetry = useCallback((value: Telemetry) => setTelemetry(value), []);
   const setControl = useCallback((direction: keyof Controls, active: boolean) => {
+    if (direction === "boost") {
+      const next = !controls.current.boost;
+      controls.current.boost = next;
+      setBoosting(next);
+      return;
+    }
     controls.current[direction] = active;
-    if (direction === "boost") setBoosting(active);
   }, []);
   const enterExperience = () => { audio.start(); setEntered(true); setPaused(false); };
   const replay = () => { setResetKey((value) => value + 1); setPaused(false); setEntered(true); };
@@ -541,8 +612,60 @@ export function JinshaExperience() {
     setResetKey((value) => value + 1);
   };
 
+  useGSAP(() => {
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const duration = reduceMotion ? 0.01 : 0.72;
+    const offset = reduceMotion ? 0 : 20;
+    const timeline = gsap.timeline({ defaults: { duration, ease: "power3.out" } });
+
+    if (!entered) {
+      timeline
+        .fromTo(".scene", { autoAlpha: 0.35, scale: 1.035 }, { autoAlpha: 1, scale: 1, duration: reduceMotion ? 0.01 : 1.45 }, 0)
+        .fromTo(".eyebrow", { autoAlpha: 0, x: -offset }, { autoAlpha: 1, x: 0 }, 0.28)
+        .fromTo(".intro h1 span", { autoAlpha: 0, y: offset * 1.4, rotationX: reduceMotion ? 0 : -18 }, { autoAlpha: 1, y: 0, rotationX: 0, stagger: 0.16, duration: reduceMotion ? 0.01 : 0.9 }, 0.42)
+        .fromTo(".intro-subtitle", { autoAlpha: 0, y: offset }, { autoAlpha: 1, y: 0 }, 0.9)
+        .fromTo(".intro-entry > *", { autoAlpha: 0, y: offset }, { autoAlpha: 1, y: 0, stagger: 0.14 }, 1.08)
+        .fromTo(".intro-route > *", { autoAlpha: 0, scaleX: 0.6 }, { autoAlpha: 1, scaleX: 1, stagger: 0.09, transformOrigin: "left center" }, 1.35);
+      return;
+    }
+
+    timeline
+      .fromTo(".hud-frame i", { autoAlpha: 0, scale: 0.7 }, { autoAlpha: 1, scale: 1, stagger: 0.06 }, 0)
+      .fromTo([".brand-rail", ".stage-heading", ".top-actions"], { autoAlpha: 0, y: -offset }, { autoAlpha: 1, y: 0, stagger: 0.11 }, 0.12)
+      .fromTo(".flight-dock", { autoAlpha: 0, y: offset }, { autoAlpha: 1, y: 0, duration: reduceMotion ? 0.01 : 0.9 }, 0.38)
+      .fromTo(".flight-prompt", { autoAlpha: 0, y: offset * 0.6 }, { autoAlpha: 1, y: 0 }, 0.62)
+      .fromTo(".touch-controls", { autoAlpha: 0, y: offset }, { autoAlpha: 1, y: 0 }, 0.48);
+  }, { scope: experienceRef, dependencies: [entered, resetKey], revertOnUpdate: true });
+
+  useGSAP(() => {
+    const card = experienceRef.current?.querySelector(".artifact-card");
+    if (!card) return;
+    if (!activeArtifact) {
+      gsap.set(card, { autoAlpha: 0 });
+      return;
+    }
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const duration = reduceMotion ? 0.01 : 0.62;
+    const timeline = gsap.timeline({ defaults: { duration, ease: "power3.out" } });
+    timeline
+      .fromTo(".artifact-card", { autoAlpha: 0, x: reduceMotion ? 0 : 30, scale: reduceMotion ? 1 : 0.965 }, { autoAlpha: 1, x: 0, scale: 1 }, 0)
+      .fromTo(".artifact-signal i", { scaleY: 0 }, { scaleY: 1, stagger: 0.11, transformOrigin: "center bottom" }, 0.12)
+      .fromTo([".artifact-kicker", ".artifact-card h3"], { autoAlpha: 0, y: 12 }, { autoAlpha: 1, y: 0, stagger: 0.12 }, 0.2)
+      .fromTo(".artifact-voice-line", { autoAlpha: 0, y: 14 }, { autoAlpha: 1, y: 0, duration: reduceMotion ? 0.01 : 0.85 }, 0.48)
+      .fromTo([".artifact-context", ".artifact-meta"], { autoAlpha: 0, y: 10 }, { autoAlpha: 1, y: 0, stagger: 0.14 }, 0.92);
+  }, { scope: experienceRef, dependencies: [activeArtifact?.id], revertOnUpdate: true });
+
+  useGSAP(() => {
+    if (!paused && !telemetry.finished) return;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const timeline = gsap.timeline({ defaults: { duration: reduceMotion ? 0.01 : 0.62, ease: "power3.out" } });
+    timeline
+      .fromTo(".pause-card", { autoAlpha: 0 }, { autoAlpha: 1 }, 0)
+      .fromTo(".pause-card > *", { autoAlpha: 0, y: reduceMotion ? 0 : 18 }, { autoAlpha: 1, y: 0, stagger: 0.1 }, 0.16);
+  }, { scope: experienceRef, dependencies: [paused, telemetry.finished], revertOnUpdate: true });
+
   return (
-    <main className={`experience ${entered ? "is-running" : "is-intro"} ${boosting && entered && !paused ? "is-boosting" : ""}`}>
+    <main ref={experienceRef} className={`experience ${entered ? "is-running" : "is-intro"} ${boosting && entered && !paused ? "is-boosting" : ""}`}>
       <div className="scene" aria-label="羽见千年三维体验场景">
         <Canvas camera={{ position: [0, 2.6, 11], fov: 58 }} dpr={quality === "high" ? [1, 1.65] : [0.75, 1.1]} gl={{ antialias: quality === "high", powerPreference: quality === "high" ? "high-performance" : "low-power" }}>
           <FlightScene started={entered} paused={paused || telemetry.finished} quality={quality} controls={controls} resetKey={resetKey} onTelemetry={reportTelemetry} />
@@ -569,16 +692,23 @@ export function JinshaExperience() {
           <span>{stage.index}</span><div><small>CHAPTER {telemetry.stage + 1} / 3</small><h2>{stage.name}</h2><div className="stage-meter">{STAGES.map((item, index) => <i key={item.name} className={index <= telemetry.stage ? "is-active" : ""} />)}</div></div>
         </section>
         <div className="top-actions">
-          <button onClick={audio.toggle} aria-label={audio.muted ? "开启环境声音" : "关闭环境声音"}>{audio.muted ? "声音 关" : "声音 开"}</button>
+          <button onClick={audio.toggle} aria-label={audio.muted ? "开启背景音乐" : "关闭背景音乐"}>{audio.muted ? "BGM 关" : "BGM 开"}</button>
           <button onClick={() => setQuality((value) => value === "high" ? "eco" : "high")} aria-label="切换画质">画质 {quality === "high" ? "高" : "省电"}</button>
           <button onClick={() => setPaused((value) => !value)} aria-label={paused ? "继续飞行" : "暂停飞行"}>{paused ? "继续" : "暂停"}</button>
         </div>
-        {telemetry.progress < 12 && !paused && <p className="flight-prompt">让曦羽保持前行<br /><span>A / D 横移　W / S 升降　Shift 加速</span></p>}
+        {telemetry.progress < 12 && !paused && <p className="flight-prompt">让曦羽保持前行<br /><span>A / D 横移　W / S 升降　Shift 切换疾飞</span></p>}
         <aside className={`artifact-card ${activeArtifact ? "is-visible" : ""}`} aria-live="polite">
-          {activeArtifact && <><span className="artifact-number">{String(ARTIFACTS.indexOf(activeArtifact) + 1).padStart(2, "0")}</span><p>金沙文化节点 · 白模</p><h3>{activeArtifact.name}</h3><div className="artifact-rule" /><p className="artifact-copy">{activeArtifact.caption}</p><small>{activeArtifact.assetKey}</small></>}
+          {activeArtifact && <div className="artifact-voice" key={activeArtifact.id}>
+            <div className="artifact-signal" aria-hidden="true"><i /><i /><i /><i /></div>
+            <p className="artifact-kicker">文物回声 · MEMORY SPEAKS</p>
+            <h3>{activeArtifact.name}</h3>
+            <blockquote className="artifact-voice-line">{activeArtifact.voice}</blockquote>
+            <p className="artifact-context">{activeArtifact.caption}</p>
+            <div className="artifact-meta"><span>记忆节点 {String(ARTIFACTS.indexOf(activeArtifact) + 1).padStart(2, "0")} / {String(ARTIFACTS.length).padStart(2, "0")}</span><i /><span>{STAGES[activeArtifact.stage].name}</span></div>
+          </div>}
         </aside>
         <footer className="flight-dock">
-          <div className="control-legend"><span><kbd>A</kbd><kbd>D</kbd> 左右</span><span><kbd>W</kbd><kbd>S</kbd> 升降</span><span><kbd>⇧</kbd> 按住疾飞</span></div>
+          <div className="control-legend"><span><kbd>A</kbd><kbd>D</kbd> 左右</span><span><kbd>W</kbd><kbd>S</kbd> 升降</span><span><kbd>⇧</kbd> 切换疾飞</span></div>
           <div className="journey-progress">
             <div className="progress-meta"><span>文明航迹</span><strong>{Math.round(progressPercent)}%</strong></div>
             <div className="progress-track"><i style={{ width: `${progressPercent}%` }} />{[31.7, 68.3, 100].map((position, index) => <b key={position} className={telemetry.stage >= index ? "is-passed" : ""} style={{ left: `${position}%` }} />)}</div>
@@ -588,7 +718,7 @@ export function JinshaExperience() {
         </footer>
         <div className="touch-controls" aria-label="触控飞行控制">
           <div className="touch-horizontal"><TouchButton label="左" direction="left" setControl={setControl} /><TouchButton label="右" direction="right" setControl={setControl} /></div>
-          <div className="touch-vertical"><TouchButton label="升" direction="up" setControl={setControl} /><TouchButton label="降" direction="down" setControl={setControl} /><TouchButton label="疾" direction="boost" setControl={setControl} /></div>
+          <div className="touch-vertical"><TouchButton label="升" direction="up" setControl={setControl} /><TouchButton label="降" direction="down" setControl={setControl} /><TouchButton label={boosting ? "巡" : "疾"} direction="boost" setControl={setControl} /></div>
         </div>
       </>}
 
