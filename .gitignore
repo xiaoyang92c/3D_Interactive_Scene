@@ -38,4 +38,6 @@ yarn-error.log*
 /dist-vercel/
 /.wrangler/
 /outputs/
+/output/
+/.playwright-cli/
 /work/

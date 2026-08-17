@@ -317,7 +317,8 @@ button { font: inherit; }
 
 .control-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; color: rgba(232, 223, 196, 0.42); font: 9px/1.7 "IBM Plex Mono", Consolas, monospace; letter-spacing: 0.08em; }
 .control-legend span { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
-.control-legend kbd { display: grid; min-width: 21px; height: 21px; place-items: center; border: 1px solid rgba(216, 169, 74, 0.26); background: rgba(5, 11, 13, 0.45); color: rgba(232, 223, 196, 0.72); font: 9px/1 "IBM Plex Mono", Consolas, monospace; }
+.control-legend kbd { display: grid; min-width: 21px; height: 21px; padding: 0 5px; place-items: center; border: 1px solid rgba(216, 169, 74, 0.26); background: rgba(5, 11, 13, 0.45); color: rgba(232, 223, 196, 0.72); font: 9px/1 "IBM Plex Mono", Consolas, monospace; }
+.control-legend .wide-key { min-width: 43px; padding-inline: 8px; }
 
 .flight-state { display: flex; align-items: center; justify-self: end; gap: 9px; color: rgba(232, 223, 196, 0.4); font: 9px/1 "IBM Plex Mono", Consolas, monospace; letter-spacing: 0.16em; transition: color 240ms ease; }
 .flight-state i { width: 22px; height: 1px; background: currentColor; box-shadow: 0 0 0 transparent; transition: width 240ms ease, box-shadow 240ms ease; }
@@ -357,16 +358,22 @@ button { font: inherit; }
 .quiet-button:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
 .pause-actions button:disabled { cursor: default; opacity: 0.58; }
 
-.touch-controls { display: none; }
+.touch-flight-surface,
+.touch-controls,
+.mobile-flight-instruction { display: none; }
 .no-webgl { position: absolute; z-index: 20; inset: 0; display: grid; place-items: center; background: var(--void); }
 
 @keyframes whisper-signal { 0%, 100% { opacity: 0.24; } 50% { opacity: 0.92; } }
 
 @media (max-width: 720px) {
-  :root { --edge-x: 18px; --edge-y: 20px; }
-  .hud-frame { inset: 8px; }
+  :root {
+    --edge-x: max(18px, env(safe-area-inset-left));
+    --edge-y: max(18px, env(safe-area-inset-top));
+  }
+  .experience { height: 100dvh; min-height: 520px; }
+  .hud-frame { inset: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); }
   .chapter-index { display: none; }
-  .intro { top: auto; right: 22px; bottom: 28px; left: 22px; width: auto; transform: none; }
+  .intro { top: auto; right: max(24px, env(safe-area-inset-right)); bottom: max(38px, calc(env(safe-area-inset-bottom) + 28px)); left: max(24px, env(safe-area-inset-left)); width: auto; transform: none; }
   .intro .eyebrow { margin-bottom: 13px; font-size: 8px; }
   .intro h1 { gap: 0.08em; font-size: clamp(54px, 17vw, 80px); line-height: 0.92; }
   .intro-subtitle { margin: 14px 0 0; font-size: 14px; letter-spacing: 0.16em; }
@@ -375,34 +382,43 @@ button { font: inherit; }
   .intro .enter-button { margin-left: 0; }
   .intro-route { display: none; }
   .start-hint { display: none; }
-  .brand-rail { top: var(--edge-y); left: var(--edge-x); }
-  .brand-rail p { display: none; }
-  .top-actions { top: var(--edge-y); right: 14px; gap: 4px; }
-  .top-actions button { grid-template-columns: 1fr; min-width: 45px; min-height: 42px; padding: 7px 8px; text-align: center; }
-  .top-actions button > i, .top-actions button small { display: none; }
-  .top-actions button b { font-size: 8px; letter-spacing: 0.08em; }
-  .stage-heading { top: 74px; left: var(--edge-x); width: min(246px, calc(100vw - 36px)); min-width: 0; padding: 8px 11px; transform: none; }
+  .brand-rail { display: none; }
+  .top-actions { top: var(--edge-y); right: max(16px, env(safe-area-inset-right)); display: grid; grid-template-columns: repeat(3, 44px); gap: 5px; }
+  .top-actions button { grid-template-columns: 1fr; min-width: 0; min-height: 40px; padding: 7px 5px; text-align: center; }
+  .top-actions button > i, .top-actions button b { display: none; }
+  .top-actions button small { display: block; color: rgba(232, 223, 196, 0.62); font-size: 8px; letter-spacing: 0.1em; }
+  .top-actions button.is-active small { color: var(--gold); }
+  .top-actions .action-cruise { display: none; }
+  .stage-heading { top: calc(var(--edge-y) + 62px); left: 50%; width: min(286px, calc(100vw - 44px)); min-width: 0; padding: 9px 12px; transform: translateX(-50%); }
   .stage-heading::before, .stage-heading::after { display: none; }
   .stage-heading > span { width: 31px; height: 31px; font-size: 12px; }
   .stage-heading h2 { font-size: 16px; }
-  .artifact-card { top: auto; right: 16px; bottom: 158px; left: 16px; width: auto; }
+  .artifact-card { top: auto; right: max(18px, env(safe-area-inset-right)); bottom: calc(max(150px, env(safe-area-inset-bottom) + 142px)); left: max(18px, env(safe-area-inset-left)); width: auto; }
   .artifact-voice { padding: 20px 18px 18px 43px; transform: none; }
   .artifact-signal { top: 22px; bottom: 20px; left: 14px; }
   .artifact-card h3 { font-size: 22px; }
   .artifact-voice-line { margin: 13px 0 0; padding: 10px 0 8px 14px; font-size: 13px; line-height: 1.65; }
   .artifact-context, .artifact-meta { display: none; }
-  .flight-dock { right: 18px; bottom: 84px; left: 18px; display: block; }
+  .flight-dock { top: calc(var(--edge-y) + 3px); right: auto; bottom: auto; left: max(18px, env(safe-area-inset-left)); display: block; width: min(142px, 37vw); }
   .journey-progress { width: 100%; }
+  .progress-meta { margin-bottom: 7px; font-size: 7px; letter-spacing: 0.12em; }
+  .progress-track b { width: 4px; height: 4px; }
   .control-legend, .flight-state { display: none; }
   .progress-labels { display: none; }
-  .flight-prompt { width: 100%; transform: translate(-50%, 92px); font-size: 13px; }
-  .flight-prompt span { display: none; }
-  .touch-controls { position: absolute; z-index: 8; right: 14px; bottom: 17px; left: 14px; display: flex; justify-content: space-between; pointer-events: none; }
-  .touch-horizontal, .touch-vertical { display: flex; gap: 8px; pointer-events: auto; }
-  .touch-key { width: 46px; height: 46px; border: 1px solid rgba(216, 169, 74, 0.35); border-radius: 50%; background: rgba(5, 11, 13, 0.55); color: rgba(232, 223, 196, 0.72); font-size: 11px; backdrop-filter: blur(10px); touch-action: none; }
-  .touch-key--boost { border-color: rgba(255, 122, 47, 0.58); color: #ffc36f; }
-  .touch-key--stop { border-color: rgba(155, 200, 196, 0.46); color: var(--mist); }
-  .touch-key:active { background: var(--gold); color: var(--void); }
+  .flight-prompt { width: calc(100% - 40px); transform: translate(-50%, 104px); font-size: 12px; }
+  .desktop-flight-instruction { display: none; }
+  .mobile-flight-instruction { display: inline; color: rgba(232, 223, 196, 0.5); font-size: 8px; }
+  .touch-flight-surface { position: absolute; z-index: 2; inset: 0; display: block; touch-action: none; -webkit-user-select: none; user-select: none; }
+  .touch-controls { position: absolute; z-index: 8; right: max(18px, env(safe-area-inset-right)); bottom: max(18px, env(safe-area-inset-bottom)); display: flex; gap: 8px; pointer-events: auto; }
+  .touch-action { position: relative; display: grid; min-width: 66px; min-height: 50px; place-content: center; gap: 5px; overflow: hidden; border: 1px solid rgba(232, 223, 196, 0.16); border-radius: 2px; background: linear-gradient(145deg, rgba(5, 13, 15, 0.84), rgba(5, 13, 15, 0.5)); color: rgba(232, 223, 196, 0.68); box-shadow: 0 14px 38px rgba(0, 0, 0, 0.24); backdrop-filter: blur(14px); touch-action: manipulation; }
+  .touch-action::after { content: ""; position: absolute; right: 7px; bottom: 0; left: 7px; height: 1px; background: currentColor; opacity: 0.48; transform: scaleX(0.3); transition: transform 220ms ease, opacity 220ms ease; }
+  .touch-action small { color: rgba(232, 223, 196, 0.32); font: 7px/1 "IBM Plex Mono", Consolas, monospace; letter-spacing: 0.16em; }
+  .touch-action b { font: 400 10px/1 "Noto Serif SC", STSong, serif; letter-spacing: 0.16em; }
+  .touch-action--boost { color: #e7b653; }
+  .touch-action--cruise { color: var(--mist); }
+  .touch-action.is-active { border-color: currentColor; background: linear-gradient(145deg, rgba(28, 25, 16, 0.9), rgba(5, 13, 15, 0.64)); }
+  .touch-action.is-active::after,
+  .touch-action:active::after { opacity: 0.9; transform: scaleX(1); }
   .pause-actions { width: min(280px, 86vw); flex-direction: column; }
   .pause-actions .enter-button, .pause-actions .quiet-button { width: 100%; justify-content: center; }
 }
@@ -412,11 +428,9 @@ button { font: inherit; }
 }
 
 @media (min-width: 721px) and (pointer: coarse) {
-  .touch-controls { position: absolute; z-index: 8; right: 24px; bottom: 28px; left: 24px; display: flex; justify-content: space-between; pointer-events: none; }
-  .touch-horizontal, .touch-vertical { display: flex; gap: 10px; pointer-events: auto; }
-  .touch-key { width: 54px; height: 54px; border: 1px solid var(--line); border-radius: 50%; background: rgba(5, 11, 13, 0.52); color: var(--bone); touch-action: none; }
-  .touch-key--boost { border-color: rgba(255, 122, 47, 0.58); color: #ffc36f; }
-  .touch-key--stop { border-color: rgba(155, 200, 196, 0.46); color: var(--mist); }
+  .touch-flight-surface { position: absolute; z-index: 2; inset: 0; display: block; touch-action: none; }
+  .touch-controls { position: absolute; z-index: 8; right: 24px; bottom: 28px; display: flex; gap: 10px; pointer-events: auto; }
+  .touch-action { min-width: 74px; min-height: 54px; border: 1px solid var(--line); background: rgba(5, 11, 13, 0.58); color: var(--bone); touch-action: manipulation; }
 }
 
 @media (prefers-reduced-motion: reduce) {

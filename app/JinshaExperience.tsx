@@ -3,7 +3,7 @@
 import { Canvas, useFrame } from "@react-three/fiber";
 import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import * as THREE from "three";
 
 gsap.registerPlugin(useGSAP);
@@ -23,7 +23,7 @@ type Artifact = {
   side: number;
 };
 
-type Controls = { left: boolean; right: boolean; up: boolean; down: boolean; boost: boolean };
+type Controls = { left: boolean; right: boolean; up: boolean; down: boolean; boost: boolean; touchX: number; touchY: number };
 type Telemetry = { progress: number; stage: number; artifactId: string | null; finished: boolean };
 
 const ROUTE_LENGTH = 240;
@@ -414,7 +414,7 @@ function Xiyu({ playerRef, controls, started, cruising }: { playerRef: RefObject
   const leftWing = useRef<THREE.Mesh>(null);
   const rightWing = useRef<THREE.Mesh>(null);
   const halo = useRef<THREE.Group>(null);
-  useFrame(({ clock }) => {
+  useFrame(({ clock, size }) => {
     const boosting = controls.current.boost && cruising;
     const flap = Math.sin(clock.elapsedTime * (boosting ? 10.5 : cruising ? 5.5 : 2.4)) * (boosting ? 0.18 : cruising ? 0.12 : 0.065);
     if (leftWing.current) leftWing.current.rotation.z = -0.12 + flap;
@@ -424,7 +424,8 @@ function Xiyu({ playerRef, controls, started, cruising }: { playerRef: RefObject
       halo.current.scale.setScalar(THREE.MathUtils.lerp(halo.current.scale.x, boosting ? 1.18 : 1, 0.08));
     }
     if (playerRef.current) {
-      const targetScale = started ? 1 : 0.74;
+      const mobileScale = size.width <= 720 ? 0.78 : 1;
+      const targetScale = started ? mobileScale : mobileScale * 0.74;
       const nextScale = THREE.MathUtils.lerp(playerRef.current.scale.x, targetScale, 0.055);
       playerRef.current.scale.setScalar(nextScale);
       playerRef.current.position.z = THREE.MathUtils.lerp(playerRef.current.position.z, started ? 0 : -2.6, 0.055);
@@ -465,12 +466,15 @@ function FlightScene({ started, paused, cruising, quality, controls, resetKey, o
 
   useFrame((state, delta) => {
     const input = controls.current;
+    const isMobileViewport = state.size.width <= 720;
+    const horizontalLimit = isMobileViewport ? 2.45 : 8.4;
+    const verticalLimit = isMobileViewport ? 4.35 : 5.2;
     if (started && !paused && progress.current < ROUTE_LENGTH) {
       const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
       const speed = (reducedMotion ? 2.4 : 4.2) * (input.boost ? 1.82 : 1);
       if (cruising) progress.current = Math.min(ROUTE_LENGTH, progress.current + delta * speed);
-      const xAxis = (input.right ? 1 : 0) - (input.left ? 1 : 0);
-      const yAxis = (input.up ? 1 : 0) - (input.down ? 1 : 0);
+      const xAxis = THREE.MathUtils.clamp((input.right ? 1 : 0) - (input.left ? 1 : 0) + input.touchX, -1, 1);
+      const yAxis = THREE.MathUtils.clamp((input.up ? 1 : 0) - (input.down ? 1 : 0) + input.touchY, -1, 1);
       const acceleration = input.boost ? 24 : 17;
       velocity.current.x += xAxis * acceleration * delta;
       velocity.current.y += yAxis * acceleration * 0.76 * delta;
@@ -479,12 +483,12 @@ function FlightScene({ started, paused, cruising, quality, controls, resetKey, o
       velocity.current.x = THREE.MathUtils.clamp(velocity.current.x, input.boost ? -7.2 : -5.4, input.boost ? 7.2 : 5.4);
       velocity.current.y = THREE.MathUtils.clamp(velocity.current.y, input.boost ? -5.3 : -4.1, input.boost ? 5.3 : 4.1);
       lateral.current.addScaledVector(velocity.current, delta);
-      if (Math.abs(lateral.current.x) > 8.4) {
-        lateral.current.x = THREE.MathUtils.clamp(lateral.current.x, -8.4, 8.4);
+      if (Math.abs(lateral.current.x) > horizontalLimit) {
+        lateral.current.x = THREE.MathUtils.clamp(lateral.current.x, -horizontalLimit, horizontalLimit);
         velocity.current.x *= -0.18;
       }
-      if (Math.abs(lateral.current.y) > 5.2) {
-        lateral.current.y = THREE.MathUtils.clamp(lateral.current.y, -5.2, 5.2);
+      if (Math.abs(lateral.current.y) > verticalLimit) {
+        lateral.current.y = THREE.MathUtils.clamp(lateral.current.y, -verticalLimit, verticalLimit);
         velocity.current.y *= -0.18;
       }
     }
@@ -496,7 +500,8 @@ function FlightScene({ started, paused, cruising, quality, controls, resetKey, o
       player.current.rotation.x = THREE.MathUtils.damp(player.current.rotation.x, -velocity.current.y * 0.07 + (input.boost ? -0.12 : 0), 5.2, delta);
       player.current.rotation.y = THREE.MathUtils.damp(player.current.rotation.y, velocity.current.x * 0.024, 4.2, delta);
     }
-    state.camera.position.x = THREE.MathUtils.damp(state.camera.position.x, lateral.current.x * 0.2 - velocity.current.x * 0.045, 3.2, delta);
+    const cameraFollow = isMobileViewport ? 0.5 : 0.2;
+    state.camera.position.x = THREE.MathUtils.damp(state.camera.position.x, lateral.current.x * cameraFollow - velocity.current.x * 0.045, 3.2, delta);
     state.camera.position.y = THREE.MathUtils.damp(state.camera.position.y, 2.6 + lateral.current.y * 0.14 - velocity.current.y * 0.025, 3.2, delta);
     state.camera.position.z = THREE.MathUtils.damp(state.camera.position.z, input.boost && cruising ? 12.6 : 11, 3.8, delta);
     state.camera.lookAt(lateral.current.x * 0.24, lateral.current.y * 0.2, -7);
@@ -543,11 +548,6 @@ function FlightScene({ started, paused, cruising, quality, controls, resetKey, o
   );
 }
 
-function TouchButton({ label, direction, setControl }: { label: string; direction: keyof Controls; setControl: (direction: keyof Controls, active: boolean) => void }) {
-  if (direction === "boost") return <button className="touch-key touch-key--boost" aria-label="切换疾飞模式" onClick={() => setControl(direction, true)}>{label}</button>;
-  return <button className={`touch-key touch-key--${direction}`} aria-label={label} onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); setControl(direction, true); }} onPointerUp={() => setControl(direction, false)} onPointerCancel={() => setControl(direction, false)}>{label}</button>;
-}
-
 export function JinshaExperience() {
   const experienceRef = useRef<HTMLElement>(null);
   const [entered, setEntered] = useState(false);
@@ -558,7 +558,8 @@ export function JinshaExperience() {
   const [boosting, setBoosting] = useState(false);
   const [cruising, setCruising] = useState(true);
   const [telemetry, setTelemetry] = useState<Telemetry>({ progress: 0, stage: 0, artifactId: null, finished: false });
-  const controls = useRef<Controls>({ left: false, right: false, up: false, down: false, boost: false });
+  const controls = useRef<Controls>({ left: false, right: false, up: false, down: false, boost: false, touchX: 0, touchY: 0 });
+  const touchDrag = useRef({ pointerId: -1, startX: 0, startY: 0 });
   const audio = useAmbientSound();
   const activeArtifact = ARTIFACTS.find((artifact) => artifact.id === telemetry.artifactId) ?? null;
   const stage = STAGES[telemetry.stage];
@@ -615,6 +616,8 @@ export function JinshaExperience() {
       controls.current.right = false;
       controls.current.up = false;
       controls.current.down = false;
+      controls.current.touchX = 0;
+      controls.current.touchY = 0;
     };
     window.addEventListener("keydown", onDown);
     window.addEventListener("keyup", onUp);
@@ -623,20 +626,44 @@ export function JinshaExperience() {
   }, [cruising, entered, paused, toggleCruising]);
 
   const reportTelemetry = useCallback((value: Telemetry) => setTelemetry(value), []);
-  const setControl = useCallback((direction: keyof Controls, active: boolean) => {
-    if (direction === "boost") {
-      if (!cruising) return;
-      const next = !controls.current.boost;
-      controls.current.boost = next;
-      setBoosting(next);
-      return;
-    }
-    controls.current[direction] = active;
+  const toggleBoost = useCallback(() => {
+    if (!cruising) return;
+    const next = !controls.current.boost;
+    controls.current.boost = next;
+    setBoosting(next);
   }, [cruising]);
+
+  const releaseTouchDrag = useCallback((pointerId?: number) => {
+    if (pointerId !== undefined && touchDrag.current.pointerId !== pointerId) return;
+    touchDrag.current.pointerId = -1;
+    controls.current.touchX = 0;
+    controls.current.touchY = 0;
+  }, []);
+
+  const beginTouchDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (paused || telemetry.finished) return;
+    event.preventDefault();
+    touchDrag.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }, [paused, telemetry.finished]);
+
+  const moveTouchDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (touchDrag.current.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const radius = Math.min(108, Math.max(72, window.innerWidth * 0.22));
+    let x = (event.clientX - touchDrag.current.startX) / radius;
+    let y = (touchDrag.current.startY - event.clientY) / radius;
+    const magnitude = Math.hypot(x, y);
+    if (magnitude > 1) { x /= magnitude; y /= magnitude; }
+    const deadZone = 0.055;
+    controls.current.touchX = Math.abs(x) < deadZone ? 0 : x;
+    controls.current.touchY = Math.abs(y) < deadZone ? 0 : y;
+  }, []);
   const enterExperience = () => { audio.start(); setCruising(true); setEntered(true); setPauseClosing(false); setPaused(false); };
   const replay = () => { setResetKey((value) => value + 1); setCruising(true); setPauseClosing(false); setPaused(false); setEntered(true); };
   const returnToIntro = () => {
-    controls.current = { left: false, right: false, up: false, down: false, boost: false };
+    controls.current = { left: false, right: false, up: false, down: false, boost: false, touchX: 0, touchY: 0 };
+    touchDrag.current.pointerId = -1;
     setBoosting(false);
     setCruising(true);
     setPauseClosing(false);
@@ -722,6 +749,16 @@ export function JinshaExperience() {
         </Canvas>
       </div>
 
+      {entered && <div
+        className="touch-flight-surface"
+        aria-hidden="true"
+        onPointerDown={beginTouchDrag}
+        onPointerMove={moveTouchDrag}
+        onPointerUp={(event) => releaseTouchDrag(event.pointerId)}
+        onPointerCancel={(event) => releaseTouchDrag(event.pointerId)}
+        onLostPointerCapture={(event) => releaseTouchDrag(event.pointerId)}
+      />}
+
       <div className="hud-frame" aria-hidden="true"><i /><i /><i /><i /></div>
 
       <header className="brand-rail">
@@ -742,12 +779,12 @@ export function JinshaExperience() {
           <span>{stage.index}</span><div className="stage-copy"><div className="stage-meta"><small>CHAPTER {telemetry.stage + 1} / 3</small><b>{Math.round(progressPercent)}%</b></div><h2>{stage.name}</h2><div className="stage-meter">{STAGES.map((item, index) => <i key={item.name} className={index <= telemetry.stage ? "is-active" : ""} />)}</div></div>
         </section>
         <div className="top-actions">
-          <button className={!audio.muted ? "is-active" : ""} onClick={audio.toggle} aria-pressed={!audio.muted} aria-label={audio.muted ? "开启背景音乐" : "关闭背景音乐"}><i aria-hidden="true" /><span><small>音乐</small><b>{audio.muted ? "关闭" : "开启"}</b></span></button>
-          <button className={quality === "high" ? "is-active" : ""} onClick={() => setQuality((value) => value === "high" ? "eco" : "high")} aria-pressed={quality === "high"} aria-label="切换画质"><i aria-hidden="true" /><span><small>画质</small><b>{quality === "high" ? "高精" : "省电"}</b></span></button>
-          <button className={cruising ? "is-active" : ""} onClick={toggleCruising} aria-pressed={cruising} aria-label={cruising ? "停止向前飞行" : "继续向前飞行"}><i aria-hidden="true" /><span><small>前进</small><b>{cruising ? "飞行中" : "已停下"}</b></span></button>
-          <button className={paused ? "is-active" : ""} onClick={() => { if (paused) setPauseClosing(true); else { setPauseClosing(false); setPaused(true); } }} aria-pressed={paused} aria-label={paused ? "继续飞行" : "暂停飞行"}><i aria-hidden="true" /><span><small>菜单</small><b>{paused ? "继续" : "暂停"}</b></span></button>
+          <button className={`action-audio ${!audio.muted ? "is-active" : ""}`} onClick={audio.toggle} aria-pressed={!audio.muted} aria-label={audio.muted ? "开启背景音乐" : "关闭背景音乐"}><i aria-hidden="true" /><span><small>音乐</small><b>{audio.muted ? "关闭" : "开启"}</b></span></button>
+          <button className={`action-quality ${quality === "high" ? "is-active" : ""}`} onClick={() => setQuality((value) => value === "high" ? "eco" : "high")} aria-pressed={quality === "high"} aria-label="切换画质"><i aria-hidden="true" /><span><small>画质</small><b>{quality === "high" ? "高精" : "省电"}</b></span></button>
+          <button className={`action-cruise ${cruising ? "is-active" : ""}`} onClick={toggleCruising} aria-pressed={cruising} aria-label={cruising ? "停止向前飞行" : "继续向前飞行"}><i aria-hidden="true" /><span><small>前进</small><b>{cruising ? "飞行中" : "已停下"}</b></span></button>
+          <button className={`action-pause ${paused ? "is-active" : ""}`} onClick={() => { if (paused) setPauseClosing(true); else { setPauseClosing(false); setPaused(true); } }} aria-pressed={paused} aria-label={paused ? "继续飞行" : "暂停飞行"}><i aria-hidden="true" /><span><small>菜单</small><b>{paused ? "继续" : "暂停"}</b></span></button>
         </div>
-        {telemetry.progress < 12 && !paused && <p className="flight-prompt">让曦羽保持前行<br /><span>A / D 横移 · W / S 升降 · Shift 疾飞 · Space 停下</span></p>}
+        {telemetry.progress < 12 && !paused && <p className="flight-prompt">让曦羽保持前行<br /><span className="desktop-flight-instruction">A / D 横移 · W / S 升降 · Shift 疾飞 · Space 停下</span><span className="mobile-flight-instruction">在画面上拖动 · 控制飞行方向</span></p>}
         <aside className={`artifact-card ${activeArtifact ? "is-visible" : ""}`} aria-live="polite">
           {activeArtifact && <div className="artifact-voice" key={activeArtifact.id}>
             <div className="artifact-signal" aria-hidden="true"><i /><i /><i /><i /></div>
@@ -759,7 +796,7 @@ export function JinshaExperience() {
           </div>}
         </aside>
         <footer className="flight-dock">
-          <div className="control-legend"><span><kbd>A</kbd><kbd>D</kbd> 左右</span><span><kbd>W</kbd><kbd>S</kbd> 升降</span><span><kbd>⇧</kbd> 疾飞</span><span><kbd>Space</kbd> {cruising ? "停下" : "前进"}</span></div>
+          <div className="control-legend"><span><kbd>A</kbd><kbd>D</kbd> 左右</span><span><kbd>W</kbd><kbd>S</kbd> 升降</span><span><kbd className="wide-key">Shift</kbd> 疾飞</span><span><kbd className="wide-key">Space</kbd> {cruising ? "停下" : "前进"}</span></div>
           <div className="journey-progress">
             <div className="progress-meta"><span>文明航迹</span><strong>{Math.round(progressPercent)}%</strong></div>
             <div className="progress-track"><i style={{ width: `${progressPercent}%` }} />{[31.7, 68.3, 100].map((position, index) => <b key={position} className={telemetry.stage >= index ? "is-passed" : ""} style={{ left: `${position}%` }} />)}</div>
@@ -767,9 +804,9 @@ export function JinshaExperience() {
           </div>
           <div className="flight-state"><i />{!cruising ? "停驻中" : boosting ? "疾飞中" : "巡航中"}</div>
         </footer>
-        <div className="touch-controls" aria-label="触控飞行控制">
-          <div className="touch-horizontal"><TouchButton label="左" direction="left" setControl={setControl} /><TouchButton label="右" direction="right" setControl={setControl} /></div>
-          <div className="touch-vertical"><TouchButton label="升" direction="up" setControl={setControl} /><TouchButton label="降" direction="down" setControl={setControl} /><TouchButton label={boosting ? "巡" : "疾"} direction="boost" setControl={setControl} /><button className="touch-key touch-key--stop" aria-label={cruising ? "停止向前飞行" : "继续向前飞行"} onClick={toggleCruising}>{cruising ? "停" : "行"}</button></div>
+        <div className="touch-controls" aria-label="触控飞行操作">
+          <button className={`touch-action touch-action--boost ${boosting ? "is-active" : ""}`} aria-pressed={boosting} aria-label="切换疾飞模式" onClick={toggleBoost}><small>速度</small><b>{boosting ? "巡航" : "疾飞"}</b></button>
+          <button className={`touch-action touch-action--cruise ${!cruising ? "is-active" : ""}`} aria-pressed={!cruising} aria-label={cruising ? "停止向前飞行" : "继续向前飞行"} onClick={toggleCruising}><small>前进</small><b>{cruising ? "停驻" : "继续"}</b></button>
         </div>
       </>}
 
