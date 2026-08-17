@@ -94,7 +94,7 @@ function useAmbientSound() {
 function LightDust({ quality }: { quality: Quality }) {
   const points = useRef<THREE.Points>(null);
   const positions = useMemo(() => {
-    const count = quality === "high" ? 760 : 260;
+    const count = quality === "high" ? 440 : 180;
     const data = new Float32Array(count * 3);
     for (let i = 0; i < data.length; i += 3) {
       data[i] = (Math.random() - 0.5) * 27;
@@ -111,17 +111,17 @@ function LightDust({ quality }: { quality: Quality }) {
   return (
     <points ref={points}>
       <bufferGeometry><bufferAttribute attach="attributes-position" args={[positions, 3]} /></bufferGeometry>
-      <pointsMaterial color="#f0be58" size={quality === "high" ? 0.075 : 0.055} transparent opacity={0.68} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} />
+      <pointsMaterial color="#f0be58" size={quality === "high" ? 0.06 : 0.048} transparent opacity={0.5} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} />
     </points>
   );
 }
 
 function RouteFrames() {
-  const frames = useMemo(() => Array.from({ length: 42 }, (_, index) => index), []);
+  const frames = useMemo(() => Array.from({ length: 27 }, (_, index) => index), []);
   return (
     <group>
       {frames.map((index) => {
-        const distance = index * 6 + 3;
+        const distance = index * 9 + 5;
         const stage = distance < 76 ? 0 : distance < 164 ? 1 : 2;
         const color = STAGES[stage].color;
         const rotation = Math.sin(index * 0.74) * (stage === 2 ? 0.22 : 0.07);
@@ -129,9 +129,9 @@ function RouteFrames() {
         const height = stage === 0 ? 12 : 14;
         return (
           <group key={index} position={[0, 0.8, -distance]} rotation={[0, 0, rotation]}>
-            <mesh position={[-width / 2, 0, 0]}><boxGeometry args={[0.12, height, 0.18]} /><meshBasicMaterial color={color} transparent opacity={stage === 1 ? 0.27 : 0.18} /></mesh>
-            <mesh position={[width / 2, 0, 0]}><boxGeometry args={[0.12, height, 0.18]} /><meshBasicMaterial color={color} transparent opacity={stage === 1 ? 0.27 : 0.18} /></mesh>
-            <mesh position={[0, height / 2, 0]}><boxGeometry args={[width, 0.12, 0.18]} /><meshBasicMaterial color={color} transparent opacity={stage === 1 ? 0.27 : 0.18} /></mesh>
+            <mesh position={[-width / 2, 0, 0]}><boxGeometry args={[0.09, height, 0.14]} /><meshBasicMaterial color={color} transparent opacity={stage === 1 ? 0.17 : 0.1} /></mesh>
+            <mesh position={[width / 2, 0, 0]}><boxGeometry args={[0.09, height, 0.14]} /><meshBasicMaterial color={color} transparent opacity={stage === 1 ? 0.17 : 0.1} /></mesh>
+            <mesh position={[0, height / 2, 0]}><boxGeometry args={[width, 0.09, 0.14]} /><meshBasicMaterial color={color} transparent opacity={stage === 1 ? 0.17 : 0.1} /></mesh>
           </group>
         );
       })}
@@ -151,11 +151,11 @@ function RouteFrames() {
 
 function LivingBackdrop({ quality }: { quality: Quality }) {
   const group = useRef<THREE.Group>(null);
-  const layers = useMemo(() => Array.from({ length: quality === "high" ? 18 : 10 }, (_, index) => ({
-    distance: 14 + index * (ROUTE_LENGTH / (quality === "high" ? 18 : 10)),
-    x: Math.sin(index * 2.17) * (8.5 + index % 3),
+  const layers = useMemo(() => Array.from({ length: quality === "high" ? 10 : 6 }, (_, index) => ({
+    distance: 20 + index * (ROUTE_LENGTH / (quality === "high" ? 10 : 6)),
+    x: Math.sin(index * 2.17) * (9.5 + index % 2),
     y: Math.cos(index * 1.31) * 4.8 + 1,
-    scale: 4.5 + (index % 5) * 1.4,
+    scale: 3.6 + (index % 4) * 0.9,
     rotation: index * 0.37,
   })), [quality]);
 
@@ -450,6 +450,13 @@ export function JinshaExperience() {
   }, []);
   const enterExperience = () => { audio.start(); setEntered(true); setPaused(false); };
   const replay = () => { setResetKey((value) => value + 1); setPaused(false); setEntered(true); };
+  const returnToIntro = () => {
+    controls.current = { left: false, right: false, up: false, down: false, boost: false };
+    setBoosting(false);
+    setPaused(false);
+    setEntered(false);
+    setResetKey((value) => value + 1);
+  };
 
   return (
     <main className={`experience ${entered ? "is-running" : "is-intro"} ${boosting && entered && !paused ? "is-boosting" : ""}`}>
@@ -459,6 +466,8 @@ export function JinshaExperience() {
         </Canvas>
       </div>
 
+      {!entered && <div className="intro-cinematic" aria-hidden="true"><img src="/og.png" alt="" /><span /></div>}
+
       <div className="hud-frame" aria-hidden="true"><i /><i /><i /><i /></div>
 
       <header className="brand-rail">
@@ -467,8 +476,8 @@ export function JinshaExperience() {
       </header>
 
       {!entered && <section className="intro" aria-labelledby="experience-title">
+        <h1 id="experience-title" className="sr-only">羽见千年</h1>
         <p className="eyebrow">跨越三千年的飞行叙事</p>
-        <h1 id="experience-title">羽见<br />千年</h1>
         <p className="intro-copy">跟随曦羽穿过自然、文明与记忆，在流动的光中重新看见金沙。</p>
         <button className="enter-button" onClick={enterExperience}><span>进入体验</span><span aria-hidden="true">→</span></button>
       </section>}
@@ -501,10 +510,8 @@ export function JinshaExperience() {
         </div>
       </>}
 
-      {paused && entered && !telemetry.finished && <section className="pause-card"><p>旅程暂停</p><h2>光仍停留在这里</h2><button className="enter-button" onClick={() => setPaused(false)}><span>继续飞行</span><span>→</span></button></section>}
-      {telemetry.finished && <section className="pause-card completion-card"><p>羽见千年 · 旅程完成</p><h2>文明从未远去</h2><span>你已穿过自然、文明与记忆。正式模型加入后，所有白模节点都将被真实金沙文物替换。</span><button className="enter-button" onClick={replay}><span>再次启程</span><span>↻</span></button></section>}
-      {!entered && <nav className="chapter-index" aria-label="体验章节"><span>自然之源 <i /></span><span>文明之光 <i /></span><span>记忆重生 <i /></span></nav>}
-      {!entered && <p className="start-hint">DESKTOP · A / D 横移 · W / S 升降<br />MOBILE · 触控飞行</p>}
+      {paused && entered && !telemetry.finished && <section className="pause-card"><p>旅程暂停</p><h2>光仍停留在这里</h2><div className="pause-actions"><button className="enter-button" onClick={() => setPaused(false)}><span>继续飞行</span><span>→</span></button><button className="quiet-button" onClick={returnToIntro}>回到开始界面</button></div></section>}
+      {telemetry.finished && <section className="pause-card completion-card"><p>羽见千年 · 旅程完成</p><h2>文明从未远去</h2><span>你已穿过自然、文明与记忆。正式模型加入后，所有白模节点都将被真实金沙文物替换。</span><div className="pause-actions"><button className="enter-button" onClick={replay}><span>再次启程</span><span>↻</span></button><button className="quiet-button" onClick={returnToIntro}>回到开始界面</button></div></section>}
       <noscript><div className="no-webgl">请启用 JavaScript 以进入三维体验。</div></noscript>
     </main>
   );

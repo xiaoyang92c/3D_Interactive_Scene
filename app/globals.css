@@ -32,6 +32,18 @@ body {
 
 button { font: inherit; }
 
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
 .experience {
   position: relative;
   width: 100vw;
@@ -66,6 +78,34 @@ button { font: inherit; }
 }
 
 .is-boosting .scene::after { opacity: 0.72; }
+
+.intro-cinematic {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  overflow: hidden;
+  background: #03090b;
+}
+
+.intro-cinematic img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  filter: saturate(0.9) contrast(1.04) brightness(0.84);
+  transform: scale(1.025);
+  animation: intro-depth-drift 18s ease-in-out infinite alternate;
+}
+
+.intro-cinematic span {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(2, 8, 10, 0.2), transparent 46%, rgba(2, 8, 10, 0.12)), linear-gradient(0deg, rgba(2, 8, 10, 0.72), transparent 30%);
+  pointer-events: none;
+}
+
+.is-intro .brand-rail,
+.is-intro .hud-frame { display: none; }
 
 .hud-frame { position: absolute; z-index: 3; inset: 14px; pointer-events: none; }
 .hud-frame i { position: absolute; width: 26px; height: 26px; opacity: 0.42; transition: opacity 300ms ease, width 300ms ease, height 300ms ease; }
@@ -104,11 +144,12 @@ button { font: inherit; }
 .is-running .brand-rail strong { font-size: 12px; }
 .is-running .brand-rail p { font-size: 8px; }
 
-.intro { position: absolute; z-index: 4; left: clamp(24px, 8vw, 128px); bottom: clamp(34px, 10vh, 104px); width: min(660px, calc(100vw - 48px)); }
+.intro { position: absolute; z-index: 4; left: clamp(34px, 4.2vw, 76px); bottom: clamp(36px, 7vh, 72px); width: min(500px, calc(100vw - 68px)); }
 .eyebrow { display: flex; align-items: center; gap: 12px; margin: 0 0 18px; color: var(--gold); font: 11px/1.4 "IBM Plex Mono", Consolas, monospace; letter-spacing: 0.2em; }
 .eyebrow::before { content: ""; width: 42px; height: 1px; background: var(--gold); }
 .intro h1 { margin: 0; font-family: "Noto Serif SC", STSong, "Songti SC", serif; font-size: clamp(58px, 10vw, 142px); font-weight: 400; line-height: 0.88; letter-spacing: -0.08em; text-shadow: 0 0 48px rgba(216, 169, 74, 0.12); }
-.intro-copy { max-width: 480px; margin: 22px 0 30px 4px; color: rgba(232, 223, 196, 0.66); font-size: 14px; line-height: 1.9; letter-spacing: 0.08em; }
+.intro-copy { max-width: 420px; margin: 0 0 22px 54px; color: rgba(232, 223, 196, 0.7); font-size: 12px; line-height: 1.8; letter-spacing: 0.08em; text-shadow: 0 2px 16px rgba(0, 0, 0, 0.88); }
+.intro .enter-button { margin-left: 54px; }
 
 .enter-button { display: inline-flex; align-items: center; gap: 20px; min-width: 196px; padding: 15px 20px; border: 1px solid rgba(216, 169, 74, 0.52); border-radius: 0; background: rgba(5, 11, 13, 0.48); color: var(--bone); cursor: pointer; letter-spacing: 0.16em; backdrop-filter: blur(12px); transition: background 180ms ease, color 180ms ease, transform 180ms ease; }
 .enter-button span:last-child { color: var(--gold); font-size: 18px; }
@@ -272,20 +313,30 @@ button { font: inherit; }
 .pause-card p { margin: 0 0 12px; color: var(--gold); font: 10px/1 "IBM Plex Mono", Consolas, monospace; letter-spacing: 0.2em; }
 .pause-card h2 { margin: 0 0 28px; font: 400 clamp(38px, 6vw, 78px)/1.15 "Noto Serif SC", STSong, serif; letter-spacing: 0.06em; }
 .completion-card > span { max-width: 520px; margin: -10px 0 30px; color: rgba(232, 223, 196, 0.58); font-size: 13px; line-height: 1.8; }
+.pause-actions { display: flex; align-items: center; justify-content: center; gap: 14px; }
+.quiet-button { min-height: 51px; padding: 0 20px; border: 1px solid rgba(232, 223, 196, 0.16); background: rgba(5, 11, 13, 0.24); color: rgba(232, 223, 196, 0.62); cursor: pointer; font-size: 11px; letter-spacing: 0.12em; transition: border-color 180ms ease, color 180ms ease, background 180ms ease; }
+.quiet-button:hover { border-color: rgba(216, 169, 74, 0.5); background: rgba(216, 169, 74, 0.08); color: var(--gold); }
+.quiet-button:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
 
 .touch-controls { display: none; }
 .no-webgl { position: absolute; z-index: 20; inset: 0; display: grid; place-items: center; background: var(--void); }
 
 @keyframes prompt-in { from { opacity: 0; transform: translate(-50%, 130px); } to { opacity: 1; transform: translate(-50%, 110px); } }
 @keyframes prompt-pulse { 0%, 100% { opacity: 0.48; } 50% { opacity: 1; } }
+@keyframes intro-depth-drift { from { transform: scale(1.025) translate3d(0, 0, 0); } to { transform: scale(1.07) translate3d(-0.4%, -0.5%, 0); } }
 
 @media (max-width: 720px) {
   :root { --edge-x: 18px; --edge-y: 20px; }
   .hud-frame { inset: 8px; }
   .chapter-index { display: none; }
   .intro { bottom: 48px; }
-  .intro h1 { font-size: clamp(62px, 22vw, 96px); }
-  .intro-copy { max-width: 320px; font-size: 12px; line-height: 1.75; }
+  .intro-cinematic img { object-position: 56% center; filter: saturate(0.88) contrast(1.02) brightness(0.64); }
+  .intro-cinematic span { background: linear-gradient(0deg, rgba(2, 8, 10, 0.88), transparent 62%), linear-gradient(90deg, rgba(2, 8, 10, 0.5), transparent 80%); }
+  .intro { right: 22px; bottom: 34px; left: 22px; width: auto; }
+  .intro h1.sr-only { position: static !important; width: auto !important; height: auto !important; margin: 0 0 20px !important; overflow: visible !important; clip: auto !important; white-space: normal !important; color: var(--bone); font-size: clamp(54px, 17vw, 82px); line-height: 0.92; letter-spacing: -0.06em; text-shadow: 0 4px 30px rgba(0, 0, 0, 0.8); }
+  .intro .eyebrow { margin-bottom: 14px; }
+  .intro-copy { max-width: 300px; margin: 0 0 20px; font-size: 11px; line-height: 1.7; }
+  .intro .enter-button { margin-left: 0; }
   .start-hint { display: none; }
   .brand-rail { top: var(--edge-y); left: var(--edge-x); }
   .brand-rail p { display: none; }
@@ -310,6 +361,8 @@ button { font: inherit; }
   .touch-key { width: 46px; height: 46px; border: 1px solid rgba(216, 169, 74, 0.35); border-radius: 50%; background: rgba(5, 11, 13, 0.55); color: rgba(232, 223, 196, 0.72); font-size: 11px; backdrop-filter: blur(10px); touch-action: none; }
   .touch-key--boost { border-color: rgba(255, 122, 47, 0.58); color: #ffc36f; }
   .touch-key:active { background: var(--gold); color: var(--void); }
+  .pause-actions { width: min(280px, 86vw); flex-direction: column; }
+  .pause-actions .enter-button, .pause-actions .quiet-button { width: 100%; justify-content: center; }
 }
 
 @media (min-width: 721px) and (pointer: coarse) {
@@ -321,4 +374,5 @@ button { font: inherit; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.001ms !important; }
+  .intro-cinematic img { animation: none; }
 }
