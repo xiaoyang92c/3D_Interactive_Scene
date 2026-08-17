@@ -160,34 +160,46 @@ button { font: inherit; }
   z-index: 4;
   top: var(--edge-y);
   left: 50%;
-  display: flex;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
   align-items: center;
-  gap: 12px;
-  min-width: 218px;
-  padding: 7px 18px 8px;
+  gap: 14px;
+  width: min(326px, 31vw);
+  min-width: 270px;
+  padding: 9px 15px 10px;
   transform: translateX(-50%);
-  border-top: 1px solid rgba(216, 169, 74, 0.18);
-  border-bottom: 1px solid rgba(216, 169, 74, 0.1);
-  background: linear-gradient(90deg, transparent, rgba(5, 13, 15, 0.5) 15%, rgba(5, 13, 15, 0.5) 85%, transparent);
+  border: 1px solid rgba(216, 169, 74, 0.14);
+  background: linear-gradient(105deg, rgba(5, 13, 15, 0.82), rgba(5, 13, 15, 0.38));
+  box-shadow: 0 16px 60px rgba(0, 0, 0, 0.16), inset 0 0 24px rgba(216, 169, 74, 0.025);
+  backdrop-filter: blur(16px) saturate(92%);
   pointer-events: none;
 }
 
+.stage-heading::before,
+.stage-heading::after { content: ""; position: absolute; top: 50%; width: 40px; height: 1px; background: linear-gradient(90deg, transparent, rgba(216, 169, 74, 0.32)); }
+.stage-heading::before { right: 100%; }
+.stage-heading::after { left: 100%; transform: rotate(180deg); }
+
 .stage-heading > span {
   display: grid;
-  width: 30px;
-  height: 30px;
+  width: 36px;
+  height: 36px;
   place-items: center;
-  border: 1px solid var(--line);
+  border: 1px solid rgba(216, 169, 74, 0.34);
   border-radius: 50%;
   color: var(--gold);
+  background: radial-gradient(circle, rgba(216, 169, 74, 0.08), transparent 68%);
   font-family: "Noto Serif SC", STSong, serif;
 }
 
-.stage-heading small { color: rgba(232, 223, 196, 0.42); font: 9px/1.3 "IBM Plex Mono", Consolas, monospace; letter-spacing: 0.18em; }
+.stage-copy { min-width: 0; }
+.stage-meta { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.stage-heading small { color: rgba(232, 223, 196, 0.4); font: 8px/1.3 "IBM Plex Mono", Consolas, monospace; letter-spacing: 0.18em; }
 .stage-heading h2 { margin: 3px 0 0; font: 400 17px/1.1 "Noto Serif SC", STSong, serif; letter-spacing: 0.16em; }
-.stage-meter { display: flex; gap: 5px; margin-top: 8px; }
-.stage-meter i { display: block; width: 18px; height: 1px; background: rgba(232, 223, 196, 0.14); transition: width 350ms ease, background 350ms ease, box-shadow 350ms ease; }
-.stage-meter i.is-active { width: 28px; background: var(--gold); box-shadow: 0 0 8px rgba(216, 169, 74, 0.42); }
+.stage-meta b { color: rgba(216, 169, 74, 0.7); font: 8px/1 "IBM Plex Mono", Consolas, monospace; letter-spacing: 0.08em; }
+.stage-meter { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 8px; }
+.stage-meter i { display: block; height: 1px; background: rgba(232, 223, 196, 0.12); transition: background 350ms ease, box-shadow 350ms ease; }
+.stage-meter i.is-active { background: var(--gold); box-shadow: 0 0 8px rgba(216, 169, 74, 0.42); }
 
 .top-actions {
   position: absolute;
@@ -195,28 +207,42 @@ button { font: inherit; }
   top: var(--edge-y);
   right: var(--edge-x);
   display: flex;
-  border: 1px solid rgba(232, 223, 196, 0.13);
-  padding: 4px;
-  gap: 2px;
-  background: var(--glass);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
-  backdrop-filter: blur(18px) saturate(110%);
+  gap: 7px;
+  perspective: 600px;
 }
 
 .top-actions button {
-  min-width: 68px;
-  padding: 9px 13px;
-  border: 0;
-  border-right: 1px solid rgba(232, 223, 196, 0.09);
-  background: transparent;
-  color: rgba(232, 223, 196, 0.7);
+  position: relative;
+  display: grid;
+  grid-template-columns: 18px auto;
+  align-items: center;
+  gap: 9px;
+  min-width: 82px;
+  min-height: 50px;
+  padding: 8px 11px;
+  overflow: hidden;
+  border: 1px solid rgba(232, 223, 196, 0.12);
+  background: linear-gradient(135deg, rgba(7, 17, 19, 0.82), rgba(7, 17, 19, 0.42));
+  color: rgba(232, 223, 196, 0.64);
   cursor: pointer;
-  font-size: 9px;
-  letter-spacing: 0.08em;
+  text-align: left;
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.16);
+  backdrop-filter: blur(16px) saturate(92%);
+  transition: color 240ms ease, border-color 240ms ease, background 240ms ease, transform 240ms ease;
 }
 
-.top-actions button:last-child { border-right: 0; }
-.top-actions button:hover { color: var(--gold); background: rgba(216, 169, 74, 0.08); }
+.top-actions button::after { content: ""; position: absolute; right: 0; bottom: 0; left: 0; height: 1px; background: linear-gradient(90deg, transparent, var(--gold), transparent); transform: scaleX(0); transition: transform 260ms ease; }
+.top-actions button > i { position: relative; display: block; width: 17px; height: 17px; border: 1px solid rgba(232, 223, 196, 0.2); border-radius: 50%; transition: border-color 240ms ease, transform 500ms ease; }
+.top-actions button > i::after { content: ""; position: absolute; top: 50%; left: 50%; width: 3px; height: 3px; border-radius: 50%; background: currentColor; transform: translate(-50%, -50%); box-shadow: 0 0 8px currentColor; }
+.top-actions button span { display: grid; gap: 3px; }
+.top-actions button small { color: rgba(232, 223, 196, 0.34); font: 7px/1 "IBM Plex Mono", Consolas, monospace; letter-spacing: 0.14em; }
+.top-actions button b { font: 400 9px/1 "Noto Sans SC", "Microsoft YaHei", sans-serif; letter-spacing: 0.13em; white-space: nowrap; }
+.top-actions button.is-active { border-color: rgba(216, 169, 74, 0.28); color: var(--gold); background: linear-gradient(135deg, rgba(30, 27, 17, 0.78), rgba(7, 17, 19, 0.46)); }
+.top-actions button.is-active::after,
+.top-actions button:hover::after { transform: scaleX(1); }
+.top-actions button.is-active > i { border-color: rgba(216, 169, 74, 0.48); }
+.top-actions button:hover { color: var(--gold); border-color: rgba(216, 169, 74, 0.36); transform: translateY(-3px); }
+.top-actions button:hover > i { transform: rotate(180deg); }
 .top-actions button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 
 .flight-prompt {
@@ -327,6 +353,7 @@ button { font: inherit; }
 .quiet-button { min-height: 51px; padding: 0 20px; border: 1px solid rgba(232, 223, 196, 0.16); background: rgba(5, 11, 13, 0.24); color: rgba(232, 223, 196, 0.62); cursor: pointer; font-size: 11px; letter-spacing: 0.12em; transition: border-color 180ms ease, color 180ms ease, background 180ms ease; }
 .quiet-button:hover { border-color: rgba(216, 169, 74, 0.5); background: rgba(216, 169, 74, 0.08); color: var(--gold); }
 .quiet-button:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+.pause-actions button:disabled { cursor: default; opacity: 0.58; }
 
 .touch-controls { display: none; }
 .no-webgl { position: absolute; z-index: 20; inset: 0; display: grid; place-items: center; background: var(--void); }
@@ -348,9 +375,12 @@ button { font: inherit; }
   .start-hint { display: none; }
   .brand-rail { top: var(--edge-y); left: var(--edge-x); }
   .brand-rail p { display: none; }
-  .top-actions { top: var(--edge-y); right: 14px; }
-  .top-actions button { min-width: 54px; padding: 8px; font-size: 9px; }
-  .stage-heading { top: 74px; left: var(--edge-x); min-width: 0; padding: 0; transform: none; border: 0; background: none; }
+  .top-actions { top: var(--edge-y); right: 14px; gap: 4px; }
+  .top-actions button { grid-template-columns: 1fr; min-width: 45px; min-height: 42px; padding: 7px 8px; text-align: center; }
+  .top-actions button > i, .top-actions button small { display: none; }
+  .top-actions button b { font-size: 8px; letter-spacing: 0.08em; }
+  .stage-heading { top: 74px; left: var(--edge-x); width: min(246px, calc(100vw - 36px)); min-width: 0; padding: 8px 11px; transform: none; }
+  .stage-heading::before, .stage-heading::after { display: none; }
   .stage-heading > span { width: 31px; height: 31px; font-size: 12px; }
   .stage-heading h2 { font-size: 16px; }
   .artifact-card { top: auto; right: 16px; bottom: 158px; left: 16px; width: auto; }
@@ -372,6 +402,10 @@ button { font: inherit; }
   .touch-key:active { background: var(--gold); color: var(--void); }
   .pause-actions { width: min(280px, 86vw); flex-direction: column; }
   .pause-actions .enter-button, .pause-actions .quiet-button { width: 100%; justify-content: center; }
+}
+
+@media (min-width: 721px) and (max-width: 1100px) {
+  .stage-heading { top: calc(var(--edge-y) + 68px); }
 }
 
 @media (min-width: 721px) and (pointer: coarse) {

@@ -65,7 +65,7 @@ function useAmbientSound() {
     filter.type = "lowpass";
     filter.frequency.value = 480;
     filter.Q.value = 0.72;
-    gain.gain.value = 0.058;
+    gain.gain.value = 0.22;
     filter.connect(gain).connect(context.destination);
     const oscillators = [73.42, 110, 164.81].map((frequency, index) => {
       const oscillator = context.createOscillator();
@@ -125,7 +125,7 @@ function useAmbientSound() {
     setMuted((previous) => {
       const next = !previous;
       const audio = graph.current;
-      if (audio) audio.gain.gain.setTargetAtTime(next ? 0 : 0.058, audio.context.currentTime, 0.12);
+      if (audio) audio.gain.gain.setTargetAtTime(next ? 0 : 0.22, audio.context.currentTime, 0.12);
       return next;
     });
   }, []);
@@ -171,24 +171,32 @@ function LightDust({ quality }: { quality: Quality }) {
 }
 
 function RouteFrames() {
+  const frameOrbit = useRef<THREE.Group>(null);
   const frames = useMemo(() => Array.from({ length: 27 }, (_, index) => index), []);
+  useFrame((_, delta) => {
+    if (frameOrbit.current) frameOrbit.current.rotation.z = (frameOrbit.current.rotation.z + delta * 0.035) % (Math.PI * 2);
+  });
   return (
     <group>
-      {frames.map((index) => {
-        const distance = index * 9 + 5;
-        const stage = distance < 76 ? 0 : distance < 164 ? 1 : 2;
-        const color = STAGES[stage].color;
-        const rotation = Math.sin(index * 0.74) * (stage === 2 ? 0.22 : 0.07);
-        const width = stage === 0 ? 20 : stage === 1 ? 23 : 26;
-        const height = stage === 0 ? 12 : 14;
-        return (
-          <group key={index} position={[0, 0.8, -distance]} rotation={[0, 0, rotation]}>
-            <mesh position={[-width / 2, 0, 0]}><boxGeometry args={[0.09, height, 0.14]} /><meshBasicMaterial color={color} transparent opacity={stage === 1 ? 0.17 : 0.1} /></mesh>
-            <mesh position={[width / 2, 0, 0]}><boxGeometry args={[0.09, height, 0.14]} /><meshBasicMaterial color={color} transparent opacity={stage === 1 ? 0.17 : 0.1} /></mesh>
-            <mesh position={[0, height / 2, 0]}><boxGeometry args={[width, 0.09, 0.14]} /><meshBasicMaterial color={color} transparent opacity={stage === 1 ? 0.17 : 0.1} /></mesh>
-          </group>
-        );
-      })}
+      <group ref={frameOrbit}>
+        {frames.map((index) => {
+          const distance = index * 9 + 5;
+          const stage = distance < 76 ? 0 : distance < 164 ? 1 : 2;
+          const color = STAGES[stage].color;
+          const rotation = Math.sin(index * 0.74) * (stage === 2 ? 0.22 : 0.07);
+          const width = stage === 0 ? 20 : stage === 1 ? 23 : 26;
+          const height = stage === 0 ? 11 : 12.5;
+          const opacity = stage === 1 ? 0.17 : 0.1;
+          return (
+            <group key={index} position={[0, 1.1, -distance]} rotation={[0, 0, rotation]}>
+              <mesh position={[-width / 2, 0, 0]}><boxGeometry args={[0.09, height, 0.14]} /><meshBasicMaterial color={color} transparent opacity={opacity} /></mesh>
+              <mesh position={[width / 2, 0, 0]}><boxGeometry args={[0.09, height, 0.14]} /><meshBasicMaterial color={color} transparent opacity={opacity} /></mesh>
+              <mesh position={[0, height / 2, 0]}><boxGeometry args={[width, 0.09, 0.14]} /><meshBasicMaterial color={color} transparent opacity={opacity} /></mesh>
+              <mesh position={[0, -height / 2, 0]}><boxGeometry args={[width, 0.09, 0.14]} /><meshBasicMaterial color={color} transparent opacity={opacity * 0.82} /></mesh>
+            </group>
+          );
+        })}
+      </group>
       {[82, 106, 130, 154].map((distance, index) => (
         <mesh key={distance} position={[index % 2 ? 2.2 : -2.2, -5.3 + (index % 2), -distance]} rotation={[0, index * 0.18, 0]}>
           <boxGeometry args={[17, 1.2, 17]} /><meshStandardMaterial color="#19302f" roughness={0.92} metalness={0.08} />
@@ -543,6 +551,7 @@ export function JinshaExperience() {
   const experienceRef = useRef<HTMLElement>(null);
   const [entered, setEntered] = useState(false);
   const [paused, setPaused] = useState(false);
+  const [pauseClosing, setPauseClosing] = useState(false);
   const [quality, setQuality] = useState<Quality>("high");
   const [resetKey, setResetKey] = useState(0);
   const [boosting, setBoosting] = useState(false);
@@ -568,7 +577,11 @@ export function JinshaExperience() {
       if (key === "boost") setBoosting(active);
     };
     const onDown = (event: KeyboardEvent) => {
-      if (event.code === "Escape" && entered) { setPaused((value) => !value); return; }
+      if (event.code === "Escape" && entered) {
+        if (paused) setPauseClosing(true);
+        else { setPauseClosing(false); setPaused(true); }
+        return;
+      }
       if ((event.code === "ShiftLeft" || event.code === "ShiftRight") && entered) {
         event.preventDefault();
         if (event.repeat) return;
@@ -590,7 +603,7 @@ export function JinshaExperience() {
     window.addEventListener("keyup", onUp);
     window.addEventListener("blur", releaseControls);
     return () => { window.removeEventListener("keydown", onDown); window.removeEventListener("keyup", onUp); window.removeEventListener("blur", releaseControls); };
-  }, [entered]);
+  }, [entered, paused]);
 
   const reportTelemetry = useCallback((value: Telemetry) => setTelemetry(value), []);
   const setControl = useCallback((direction: keyof Controls, active: boolean) => {
@@ -602,11 +615,12 @@ export function JinshaExperience() {
     }
     controls.current[direction] = active;
   }, []);
-  const enterExperience = () => { audio.start(); setEntered(true); setPaused(false); };
-  const replay = () => { setResetKey((value) => value + 1); setPaused(false); setEntered(true); };
+  const enterExperience = () => { audio.start(); setEntered(true); setPauseClosing(false); setPaused(false); };
+  const replay = () => { setResetKey((value) => value + 1); setPauseClosing(false); setPaused(false); setEntered(true); };
   const returnToIntro = () => {
     controls.current = { left: false, right: false, up: false, down: false, boost: false };
     setBoosting(false);
+    setPauseClosing(false);
     setPaused(false);
     setEntered(false);
     setResetKey((value) => value + 1);
@@ -631,10 +645,15 @@ export function JinshaExperience() {
 
     timeline
       .fromTo(".hud-frame i", { autoAlpha: 0, scale: 0.7 }, { autoAlpha: 1, scale: 1, stagger: 0.06 }, 0)
-      .fromTo([".brand-rail", ".stage-heading", ".top-actions"], { autoAlpha: 0, y: -offset }, { autoAlpha: 1, y: 0, stagger: 0.11 }, 0.12)
-      .fromTo(".flight-dock", { autoAlpha: 0, y: offset }, { autoAlpha: 1, y: 0, duration: reduceMotion ? 0.01 : 0.9 }, 0.38)
-      .fromTo(".flight-prompt", { autoAlpha: 0, y: offset * 0.6 }, { autoAlpha: 1, y: 0 }, 0.62)
-      .fromTo(".touch-controls", { autoAlpha: 0, y: offset }, { autoAlpha: 1, y: 0 }, 0.48);
+      .fromTo([".brand-rail", ".stage-heading"], { autoAlpha: 0, y: -offset }, { autoAlpha: 1, y: 0, stagger: 0.12 }, 0.12)
+      .fromTo(".stage-heading > span", { autoAlpha: 0, rotation: reduceMotion ? 0 : -42, scale: 0.75 }, { autoAlpha: 1, rotation: 0, scale: 1 }, 0.26)
+      .fromTo(".stage-copy > *", { autoAlpha: 0, x: reduceMotion ? 0 : -10 }, { autoAlpha: 1, x: 0, stagger: 0.08 }, 0.3)
+      .fromTo(".top-actions", { autoAlpha: 0 }, { autoAlpha: 1, duration: reduceMotion ? 0.01 : 0.3 }, 0.16)
+      .fromTo(".top-actions button", { autoAlpha: 0, y: -offset, rotationX: reduceMotion ? 0 : -14 }, { autoAlpha: 1, y: 0, rotationX: 0, stagger: 0.1 }, 0.2)
+      .fromTo(".flight-dock", { autoAlpha: 0, y: offset }, { autoAlpha: 1, y: 0, duration: reduceMotion ? 0.01 : 0.9 }, 0.38);
+    const flightPrompt = experienceRef.current?.querySelector(".flight-prompt");
+    if (flightPrompt) timeline.fromTo(flightPrompt, { autoAlpha: 0, y: offset * 0.6 }, { autoAlpha: 1, y: 0 }, 0.62);
+    timeline.fromTo(".touch-controls", { autoAlpha: 0, y: offset }, { autoAlpha: 1, y: 0 }, 0.48);
   }, { scope: experienceRef, dependencies: [entered, resetKey], revertOnUpdate: true });
 
   useGSAP(() => {
@@ -656,13 +675,25 @@ export function JinshaExperience() {
   }, { scope: experienceRef, dependencies: [activeArtifact?.id], revertOnUpdate: true });
 
   useGSAP(() => {
-    if (!paused && !telemetry.finished) return;
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (pauseClosing && paused && !telemetry.finished) {
+      const timeline = gsap.timeline({
+        defaults: { duration: reduceMotion ? 0.01 : 0.34, ease: "power3.inOut" },
+        onComplete: () => { setPaused(false); setPauseClosing(false); },
+      });
+      timeline
+        .to(".pause-actions", { autoAlpha: 0, y: reduceMotion ? 0 : 14 }, 0)
+        .to(".pause-card h2", { autoAlpha: 0, y: reduceMotion ? 0 : -12, scale: reduceMotion ? 1 : 0.975 }, 0.08)
+        .to(".pause-card > p", { autoAlpha: 0, y: reduceMotion ? 0 : -8 }, 0.14)
+        .to(".pause-card", { autoAlpha: 0, duration: reduceMotion ? 0.01 : 0.48 }, 0.22);
+      return;
+    }
+    if (!paused && !telemetry.finished) return;
     const timeline = gsap.timeline({ defaults: { duration: reduceMotion ? 0.01 : 0.62, ease: "power3.out" } });
     timeline
       .fromTo(".pause-card", { autoAlpha: 0 }, { autoAlpha: 1 }, 0)
       .fromTo(".pause-card > *", { autoAlpha: 0, y: reduceMotion ? 0 : 18 }, { autoAlpha: 1, y: 0, stagger: 0.1 }, 0.16);
-  }, { scope: experienceRef, dependencies: [paused, telemetry.finished], revertOnUpdate: true });
+  }, { scope: experienceRef, dependencies: [paused, pauseClosing, telemetry.finished], revertOnUpdate: true });
 
   return (
     <main ref={experienceRef} className={`experience ${entered ? "is-running" : "is-intro"} ${boosting && entered && !paused ? "is-boosting" : ""}`}>
@@ -689,12 +720,12 @@ export function JinshaExperience() {
 
       {entered && <>
         <section className="stage-heading" aria-live="polite">
-          <span>{stage.index}</span><div><small>CHAPTER {telemetry.stage + 1} / 3</small><h2>{stage.name}</h2><div className="stage-meter">{STAGES.map((item, index) => <i key={item.name} className={index <= telemetry.stage ? "is-active" : ""} />)}</div></div>
+          <span>{stage.index}</span><div className="stage-copy"><div className="stage-meta"><small>CHAPTER {telemetry.stage + 1} / 3</small><b>{Math.round(progressPercent)}%</b></div><h2>{stage.name}</h2><div className="stage-meter">{STAGES.map((item, index) => <i key={item.name} className={index <= telemetry.stage ? "is-active" : ""} />)}</div></div>
         </section>
         <div className="top-actions">
-          <button onClick={audio.toggle} aria-label={audio.muted ? "开启背景音乐" : "关闭背景音乐"}>{audio.muted ? "BGM 关" : "BGM 开"}</button>
-          <button onClick={() => setQuality((value) => value === "high" ? "eco" : "high")} aria-label="切换画质">画质 {quality === "high" ? "高" : "省电"}</button>
-          <button onClick={() => setPaused((value) => !value)} aria-label={paused ? "继续飞行" : "暂停飞行"}>{paused ? "继续" : "暂停"}</button>
+          <button className={!audio.muted ? "is-active" : ""} onClick={audio.toggle} aria-pressed={!audio.muted} aria-label={audio.muted ? "开启背景音乐" : "关闭背景音乐"}><i aria-hidden="true" /><span><small>声场</small><b>{audio.muted ? "关闭" : "开启"}</b></span></button>
+          <button className={quality === "high" ? "is-active" : ""} onClick={() => setQuality((value) => value === "high" ? "eco" : "high")} aria-pressed={quality === "high"} aria-label="切换画质"><i aria-hidden="true" /><span><small>画质</small><b>{quality === "high" ? "高精" : "省电"}</b></span></button>
+          <button className={paused ? "is-active" : ""} onClick={() => { if (paused) setPauseClosing(true); else { setPauseClosing(false); setPaused(true); } }} aria-pressed={paused} aria-label={paused ? "继续飞行" : "暂停飞行"}><i aria-hidden="true" /><span><small>旅程</small><b>{paused ? "继续" : "暂停"}</b></span></button>
         </div>
         {telemetry.progress < 12 && !paused && <p className="flight-prompt">让曦羽保持前行<br /><span>A / D 横移　W / S 升降　Shift 切换疾飞</span></p>}
         <aside className={`artifact-card ${activeArtifact ? "is-visible" : ""}`} aria-live="polite">
@@ -722,7 +753,7 @@ export function JinshaExperience() {
         </div>
       </>}
 
-      {paused && entered && !telemetry.finished && <section className="pause-card"><p>旅程暂停</p><h2>光仍停留在这里</h2><div className="pause-actions"><button className="enter-button" onClick={() => setPaused(false)}><span>继续飞行</span><span>→</span></button><button className="quiet-button" onClick={returnToIntro}>回到开始界面</button></div></section>}
+      {paused && entered && !telemetry.finished && <section className="pause-card"><p>旅程暂停</p><h2>光仍停留在这里</h2><div className="pause-actions"><button className="enter-button" disabled={pauseClosing} onClick={() => setPauseClosing(true)}><span>继续飞行</span><span>→</span></button><button className="quiet-button" disabled={pauseClosing} onClick={returnToIntro}>回到开始界面</button></div></section>}
       {telemetry.finished && <section className="pause-card completion-card"><p>羽见千年 · 旅程完成</p><h2>文明从未远去</h2><span>你已穿过自然、文明与记忆。正式模型加入后，所有白模节点都将被真实金沙文物替换。</span><div className="pause-actions"><button className="enter-button" onClick={replay}><span>再次启程</span><span>↻</span></button><button className="quiet-button" onClick={returnToIntro}>回到开始界面</button></div></section>}
       <noscript><div className="no-webgl">请启用 JavaScript 以进入三维体验。</div></noscript>
     </main>
