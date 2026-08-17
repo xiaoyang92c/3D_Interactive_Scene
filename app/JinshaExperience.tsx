@@ -183,6 +183,64 @@ function LivingBackdrop({ quality }: { quality: Quality }) {
   </group>;
 }
 
+function IntroArchitecture({ quality }: { quality: Quality }) {
+  const group = useRef<THREE.Group>(null);
+  const platforms = useMemo(() => [
+    { x: -8.6, y: -3.5, z: -1, w: 7.2, d: 5.2, kind: "ring" },
+    { x: 8.4, y: -3.1, z: -4, w: 7.4, d: 4.8, kind: "mask" },
+    { x: -7.2, y: -2.6, z: -10, w: 5.8, d: 4, kind: "pillar" },
+    { x: 7.5, y: -2.2, z: -13, w: 5.2, d: 3.8, kind: "ring" },
+    { x: -5.4, y: -1.8, z: -19, w: 4.2, d: 3.2, kind: "mask" },
+    { x: 5.2, y: -1.5, z: -23, w: 3.8, d: 2.8, kind: "pillar" },
+  ], []);
+
+  useFrame(({ clock }) => {
+    if (!group.current) return;
+    group.current.position.y = Math.sin(clock.elapsedTime * 0.24) * 0.09;
+  });
+
+  return <group ref={group}>
+    {[0, 1, 2, 3, 4, 5].map((index) => {
+      const z = -2 - index * 5.2;
+      const width = 19 - index * 1.7;
+      return <group key={`intro-frame-${index}`} position={[0, 0.4 + index * 0.12, z]}>
+        <mesh position={[-width / 2, 0, 0]}><boxGeometry args={[0.055, 11 - index * 0.5, 0.08]} /><meshBasicMaterial color={index % 2 ? "#9bc8c4" : "#d8a94a"} transparent opacity={0.12 - index * 0.01} /></mesh>
+        <mesh position={[width / 2, 0, 0]}><boxGeometry args={[0.055, 11 - index * 0.5, 0.08]} /><meshBasicMaterial color={index % 2 ? "#9bc8c4" : "#d8a94a"} transparent opacity={0.12 - index * 0.01} /></mesh>
+        <mesh position={[0, 5.5 - index * 0.25, 0]}><boxGeometry args={[width, 0.055, 0.08]} /><meshBasicMaterial color={index % 2 ? "#9bc8c4" : "#d8a94a"} transparent opacity={0.12 - index * 0.01} /></mesh>
+      </group>;
+    })}
+    {platforms.map((platform, index) => <group key={index} position={[platform.x, platform.y, platform.z]}>
+      <mesh>
+        <boxGeometry args={[platform.w, 0.52, platform.d]} />
+        <meshStandardMaterial color="#102321" emissive={index % 2 ? "#274a45" : "#4c3815"} emissiveIntensity={0.18} roughness={0.86} metalness={0.18} />
+      </mesh>
+      <mesh position={[0, 0.31, 0]}>
+        <boxGeometry args={[platform.w * 0.82, 0.035, platform.d * 0.78]} />
+        <meshBasicMaterial color={index % 2 ? "#75a9a0" : "#c9983b"} transparent opacity={0.24} />
+      </mesh>
+      {platform.kind === "ring" && <mesh position={[0, 2.1, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[1.45 - index * 0.07, 0.22, 10, 48]} />
+        <meshStandardMaterial color="#d8a94a" emissive="#8b5d14" emissiveIntensity={0.7} metalness={0.54} roughness={0.34} />
+      </mesh>}
+      {platform.kind === "mask" && <group position={[0, 1.9, 0]}>
+        <mesh><boxGeometry args={[2.7, 0.36, 0.34]} /><meshStandardMaterial color="#c9983b" emissive="#785014" emissiveIntensity={0.55} /></mesh>
+        <mesh position={[-1.15, -0.8, 0]}><boxGeometry args={[0.34, 1.7, 0.34]} /><meshStandardMaterial color="#c9983b" emissive="#785014" emissiveIntensity={0.55} /></mesh>
+        <mesh position={[1.15, -0.8, 0]}><boxGeometry args={[0.34, 1.7, 0.34]} /><meshStandardMaterial color="#c9983b" emissive="#785014" emissiveIntensity={0.55} /></mesh>
+      </group>}
+      {platform.kind === "pillar" && <group position={[0, 1.45, 0]}>
+        <mesh rotation={[0, 0, -0.12]}><boxGeometry args={[0.56, 3, 0.56]} /><meshStandardMaterial color="#6f9d94" emissive="#244842" emissiveIntensity={0.5} /></mesh>
+        <mesh position={[1, 0.2, 0]} rotation={[0, 0, 0.16]}><boxGeometry args={[0.46, 2.4, 0.46]} /><meshStandardMaterial color="#6f9d94" emissive="#244842" emissiveIntensity={0.5} /></mesh>
+      </group>}
+    </group>)}
+    {[0, 1, 2].map((index) => <mesh key={`floor-${index}`} position={[0, -4.5 + index * 0.18, -7 - index * 9]}>
+      <boxGeometry args={[7.4 - index * 0.8, 0.12, 8]} />
+      <meshStandardMaterial color="#0b1818" emissive="#1d3935" emissiveIntensity={0.12} roughness={0.94} />
+    </mesh>)}
+    <pointLight position={[0, 2, -3]} color="#d8a94a" intensity={quality === "high" ? 20 : 12} distance={18} />
+    <pointLight position={[7, 1, -12]} color="#6ba69b" intensity={quality === "high" ? 14 : 8} distance={18} />
+  </group>;
+}
+
 function SpeedLines({ quality, controls }: { quality: Quality; controls: RefObject<Controls> }) {
   const mesh = useRef<THREE.InstancedMesh>(null);
   const material = useRef<THREE.MeshBasicMaterial>(null);
@@ -269,7 +327,7 @@ function ArtifactVisual({ artifact, active }: { artifact: Artifact; active: bool
   );
 }
 
-function Xiyu({ playerRef, controls }: { playerRef: RefObject<THREE.Group | null>; controls: RefObject<Controls> }) {
+function Xiyu({ playerRef, controls, started }: { playerRef: RefObject<THREE.Group | null>; controls: RefObject<Controls>; started: boolean }) {
   const leftWing = useRef<THREE.Mesh>(null);
   const rightWing = useRef<THREE.Mesh>(null);
   const halo = useRef<THREE.Group>(null);
@@ -281,6 +339,12 @@ function Xiyu({ playerRef, controls }: { playerRef: RefObject<THREE.Group | null
     if (halo.current) {
       halo.current.rotation.z = clock.elapsedTime * (boosting ? 0.72 : 0.28);
       halo.current.scale.setScalar(THREE.MathUtils.lerp(halo.current.scale.x, boosting ? 1.18 : 1, 0.08));
+    }
+    if (playerRef.current) {
+      const targetScale = started ? 1 : 0.74;
+      const nextScale = THREE.MathUtils.lerp(playerRef.current.scale.x, targetScale, 0.055);
+      playerRef.current.scale.setScalar(nextScale);
+      playerRef.current.position.z = THREE.MathUtils.lerp(playerRef.current.position.z, started ? 0 : -2.6, 0.055);
     }
   });
   return (
@@ -386,13 +450,12 @@ function FlightScene({ started, paused, quality, controls, resetKey, onTelemetry
       <ambientLight intensity={0.55} color="#5e8580" />
       <directionalLight position={[5, 9, 6]} intensity={2.2} color="#ffd37a" />
       <group ref={world}>
-        <RouteFrames />
-        <LivingBackdrop quality={quality} />
+        {!started && <IntroArchitecture quality={quality} />}
+        {started && <><RouteFrames /><LivingBackdrop quality={quality} />{ARTIFACTS.map((artifact) => <ArtifactVisual key={artifact.id} artifact={artifact} active={currentArtifact.id === artifact.id && Math.abs(artifact.distance - progress.current) < 8} />)}</>}
         <LightDust quality={quality} />
-        {ARTIFACTS.map((artifact) => <ArtifactVisual key={artifact.id} artifact={artifact} active={currentArtifact.id === artifact.id && Math.abs(artifact.distance - progress.current) < 8} />)}
       </group>
       <SpeedLines quality={quality} controls={controls} />
-      <Xiyu playerRef={player} controls={controls} />
+      <Xiyu playerRef={player} controls={controls} started={started} />
     </>
   );
 }
@@ -466,8 +529,6 @@ export function JinshaExperience() {
         </Canvas>
       </div>
 
-      {!entered && <div className="intro-cinematic" aria-hidden="true"><img src="/og.png" alt="" /><span /></div>}
-
       <div className="hud-frame" aria-hidden="true"><i /><i /><i /><i /></div>
 
       <header className="brand-rail">
@@ -476,10 +537,10 @@ export function JinshaExperience() {
       </header>
 
       {!entered && <section className="intro" aria-labelledby="experience-title">
-        <h1 id="experience-title" className="sr-only">羽见千年</h1>
-        <p className="eyebrow">跨越三千年的飞行叙事</p>
-        <p className="intro-copy">跟随曦羽穿过自然、文明与记忆，在流动的光中重新看见金沙。</p>
-        <button className="enter-button" onClick={enterExperience}><span>进入体验</span><span aria-hidden="true">→</span></button>
+        <p className="eyebrow">JINSHA IMMERSIVE ARCHIVE</p>
+        <h1 id="experience-title"><span>羽见</span><span>千年</span></h1>
+        <p className="intro-subtitle">金沙沉浸式数字体验</p>
+        <div className="intro-entry"><p className="intro-copy">跟随曦羽穿过自然、文明与记忆，在流动的光中重新看见金沙。</p><button className="enter-button" onClick={enterExperience}><span>进入体验</span><span aria-hidden="true">→</span></button></div>
       </section>}
 
       {entered && <>
