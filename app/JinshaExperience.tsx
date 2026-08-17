@@ -269,6 +269,7 @@ function IntroArchitecture({ quality }: { quality: Quality }) {
         <mesh position={[-width / 2, 0, 0]}><boxGeometry args={[0.055, 11 - index * 0.5, 0.08]} /><meshBasicMaterial color={index % 2 ? "#9bc8c4" : "#d8a94a"} transparent opacity={0.12 - index * 0.01} /></mesh>
         <mesh position={[width / 2, 0, 0]}><boxGeometry args={[0.055, 11 - index * 0.5, 0.08]} /><meshBasicMaterial color={index % 2 ? "#9bc8c4" : "#d8a94a"} transparent opacity={0.12 - index * 0.01} /></mesh>
         <mesh position={[0, 5.5 - index * 0.25, 0]}><boxGeometry args={[width, 0.055, 0.08]} /><meshBasicMaterial color={index % 2 ? "#9bc8c4" : "#d8a94a"} transparent opacity={0.12 - index * 0.01} /></mesh>
+        <mesh position={[0, -5.5 + index * 0.25, 0]}><boxGeometry args={[width, 0.055, 0.08]} /><meshBasicMaterial color={index % 2 ? "#9bc8c4" : "#d8a94a"} transparent opacity={(0.12 - index * 0.01) * 0.78} /></mesh>
       </group>;
     })}
     {platforms.map((platform, index) => <group key={index} position={[platform.x, platform.y, platform.z]}>
@@ -323,7 +324,7 @@ function IntroSunbirds() {
   </group>;
 }
 
-function SpeedLines({ quality, controls }: { quality: Quality; controls: RefObject<Controls> }) {
+function SpeedLines({ quality, controls, cruising }: { quality: Quality; controls: RefObject<Controls>; cruising: boolean }) {
   const mesh = useRef<THREE.InstancedMesh>(null);
   const material = useRef<THREE.MeshBasicMaterial>(null);
   const intensity = useRef(0);
@@ -342,7 +343,7 @@ function SpeedLines({ quality, controls }: { quality: Quality; controls: RefObje
   }), [count]);
 
   useFrame((_, delta) => {
-    const target = controls.current.boost ? 1 : 0;
+    const target = controls.current.boost && cruising ? 1 : 0;
     intensity.current = THREE.MathUtils.damp(intensity.current, target, target ? 7.5 : 4.2, delta);
     if (!mesh.current || !material.current) return;
     mesh.current.visible = intensity.current > 0.012;
@@ -409,13 +410,13 @@ function ArtifactVisual({ artifact, active }: { artifact: Artifact; active: bool
   );
 }
 
-function Xiyu({ playerRef, controls, started }: { playerRef: RefObject<THREE.Group | null>; controls: RefObject<Controls>; started: boolean }) {
+function Xiyu({ playerRef, controls, started, cruising }: { playerRef: RefObject<THREE.Group | null>; controls: RefObject<Controls>; started: boolean; cruising: boolean }) {
   const leftWing = useRef<THREE.Mesh>(null);
   const rightWing = useRef<THREE.Mesh>(null);
   const halo = useRef<THREE.Group>(null);
   useFrame(({ clock }) => {
-    const boosting = controls.current.boost;
-    const flap = Math.sin(clock.elapsedTime * (boosting ? 10.5 : 5.5)) * (boosting ? 0.18 : 0.12);
+    const boosting = controls.current.boost && cruising;
+    const flap = Math.sin(clock.elapsedTime * (boosting ? 10.5 : cruising ? 5.5 : 2.4)) * (boosting ? 0.18 : cruising ? 0.12 : 0.065);
     if (leftWing.current) leftWing.current.rotation.z = -0.12 + flap;
     if (rightWing.current) rightWing.current.rotation.z = 0.12 - flap;
     if (halo.current) {
@@ -445,7 +446,7 @@ function Xiyu({ playerRef, controls, started }: { playerRef: RefObject<THREE.Gro
   );
 }
 
-function FlightScene({ started, paused, quality, controls, resetKey, onTelemetry }: { started: boolean; paused: boolean; quality: Quality; controls: RefObject<Controls>; resetKey: number; onTelemetry: (telemetry: Telemetry) => void }) {
+function FlightScene({ started, paused, cruising, quality, controls, resetKey, onTelemetry }: { started: boolean; paused: boolean; cruising: boolean; quality: Quality; controls: RefObject<Controls>; resetKey: number; onTelemetry: (telemetry: Telemetry) => void }) {
   const world = useRef<THREE.Group>(null);
   const player = useRef<THREE.Group>(null);
   const progress = useRef(0);
@@ -467,7 +468,7 @@ function FlightScene({ started, paused, quality, controls, resetKey, onTelemetry
     if (started && !paused && progress.current < ROUTE_LENGTH) {
       const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
       const speed = (reducedMotion ? 2.4 : 4.2) * (input.boost ? 1.82 : 1);
-      progress.current = Math.min(ROUTE_LENGTH, progress.current + delta * speed);
+      if (cruising) progress.current = Math.min(ROUTE_LENGTH, progress.current + delta * speed);
       const xAxis = (input.right ? 1 : 0) - (input.left ? 1 : 0);
       const yAxis = (input.up ? 1 : 0) - (input.down ? 1 : 0);
       const acceleration = input.boost ? 24 : 17;
@@ -497,7 +498,7 @@ function FlightScene({ started, paused, quality, controls, resetKey, onTelemetry
     }
     state.camera.position.x = THREE.MathUtils.damp(state.camera.position.x, lateral.current.x * 0.2 - velocity.current.x * 0.045, 3.2, delta);
     state.camera.position.y = THREE.MathUtils.damp(state.camera.position.y, 2.6 + lateral.current.y * 0.14 - velocity.current.y * 0.025, 3.2, delta);
-    state.camera.position.z = THREE.MathUtils.damp(state.camera.position.z, input.boost ? 12.6 : 11, 3.8, delta);
+    state.camera.position.z = THREE.MathUtils.damp(state.camera.position.z, input.boost && cruising ? 12.6 : 11, 3.8, delta);
     state.camera.lookAt(lateral.current.x * 0.24, lateral.current.y * 0.2, -7);
 
     const stageBlend = progress.current < 68 ? 0 : progress.current < 84 ? (progress.current - 68) / 16 : progress.current < 156 ? 1 : progress.current < 172 ? 1 + (progress.current - 156) / 16 : 2;
@@ -536,8 +537,8 @@ function FlightScene({ started, paused, quality, controls, resetKey, onTelemetry
         {started && <><RouteFrames /><LivingBackdrop quality={quality} />{ARTIFACTS.map((artifact) => <ArtifactVisual key={artifact.id} artifact={artifact} active={currentArtifact.id === artifact.id && Math.abs(artifact.distance - progress.current) < 8} />)}</>}
         <LightDust quality={quality} />
       </group>
-      <SpeedLines quality={quality} controls={controls} />
-      <Xiyu playerRef={player} controls={controls} started={started} />
+      <SpeedLines quality={quality} controls={controls} cruising={cruising} />
+      <Xiyu playerRef={player} controls={controls} started={started} cruising={cruising} />
     </>
   );
 }
@@ -555,6 +556,7 @@ export function JinshaExperience() {
   const [quality, setQuality] = useState<Quality>("high");
   const [resetKey, setResetKey] = useState(0);
   const [boosting, setBoosting] = useState(false);
+  const [cruising, setCruising] = useState(true);
   const [telemetry, setTelemetry] = useState<Telemetry>({ progress: 0, stage: 0, artifactId: null, finished: false });
   const controls = useRef<Controls>({ left: false, right: false, up: false, down: false, boost: false });
   const audio = useAmbientSound();
@@ -565,6 +567,15 @@ export function JinshaExperience() {
   useEffect(() => {
     if (typeof window !== "undefined" && (window.innerWidth < 760 || navigator.hardwareConcurrency <= 4)) setQuality("eco");
   }, []);
+
+  const toggleCruising = useCallback(() => {
+    const next = !cruising;
+    setCruising(next);
+    if (!next) {
+      controls.current.boost = false;
+      setBoosting(false);
+    }
+  }, [cruising]);
 
   useEffect(() => {
     const keyMap: Record<string, keyof Controls> = { KeyA: "left", ArrowLeft: "left", KeyD: "right", ArrowRight: "right", KeyW: "up", ArrowUp: "up", KeyS: "down", ArrowDown: "down" };
@@ -582,9 +593,15 @@ export function JinshaExperience() {
         else { setPauseClosing(false); setPaused(true); }
         return;
       }
+      if (event.code === "Space" && entered && !paused) {
+        event.preventDefault();
+        if (!event.repeat) toggleCruising();
+        return;
+      }
       if ((event.code === "ShiftLeft" || event.code === "ShiftRight") && entered) {
         event.preventDefault();
         if (event.repeat) return;
+        if (!cruising) return;
         const next = !controls.current.boost;
         controls.current.boost = next;
         setBoosting(next);
@@ -603,23 +620,25 @@ export function JinshaExperience() {
     window.addEventListener("keyup", onUp);
     window.addEventListener("blur", releaseControls);
     return () => { window.removeEventListener("keydown", onDown); window.removeEventListener("keyup", onUp); window.removeEventListener("blur", releaseControls); };
-  }, [entered, paused]);
+  }, [cruising, entered, paused, toggleCruising]);
 
   const reportTelemetry = useCallback((value: Telemetry) => setTelemetry(value), []);
   const setControl = useCallback((direction: keyof Controls, active: boolean) => {
     if (direction === "boost") {
+      if (!cruising) return;
       const next = !controls.current.boost;
       controls.current.boost = next;
       setBoosting(next);
       return;
     }
     controls.current[direction] = active;
-  }, []);
-  const enterExperience = () => { audio.start(); setEntered(true); setPauseClosing(false); setPaused(false); };
-  const replay = () => { setResetKey((value) => value + 1); setPauseClosing(false); setPaused(false); setEntered(true); };
+  }, [cruising]);
+  const enterExperience = () => { audio.start(); setCruising(true); setEntered(true); setPauseClosing(false); setPaused(false); };
+  const replay = () => { setResetKey((value) => value + 1); setCruising(true); setPauseClosing(false); setPaused(false); setEntered(true); };
   const returnToIntro = () => {
     controls.current = { left: false, right: false, up: false, down: false, boost: false };
     setBoosting(false);
+    setCruising(true);
     setPauseClosing(false);
     setPaused(false);
     setEntered(false);
@@ -696,10 +715,10 @@ export function JinshaExperience() {
   }, { scope: experienceRef, dependencies: [paused, pauseClosing, telemetry.finished], revertOnUpdate: true });
 
   return (
-    <main ref={experienceRef} className={`experience ${entered ? "is-running" : "is-intro"} ${boosting && entered && !paused ? "is-boosting" : ""}`}>
+    <main ref={experienceRef} className={`experience ${entered ? "is-running" : "is-intro"} ${boosting && cruising && entered && !paused ? "is-boosting" : ""} ${!cruising && entered ? "is-stopped" : ""}`}>
       <div className="scene" aria-label="羽见千年三维体验场景">
         <Canvas camera={{ position: [0, 2.6, 11], fov: 58 }} dpr={quality === "high" ? [1, 1.65] : [0.75, 1.1]} gl={{ antialias: quality === "high", powerPreference: quality === "high" ? "high-performance" : "low-power" }}>
-          <FlightScene started={entered} paused={paused || telemetry.finished} quality={quality} controls={controls} resetKey={resetKey} onTelemetry={reportTelemetry} />
+          <FlightScene started={entered} paused={paused || telemetry.finished} cruising={cruising} quality={quality} controls={controls} resetKey={resetKey} onTelemetry={reportTelemetry} />
         </Canvas>
       </div>
 
@@ -723,11 +742,12 @@ export function JinshaExperience() {
           <span>{stage.index}</span><div className="stage-copy"><div className="stage-meta"><small>CHAPTER {telemetry.stage + 1} / 3</small><b>{Math.round(progressPercent)}%</b></div><h2>{stage.name}</h2><div className="stage-meter">{STAGES.map((item, index) => <i key={item.name} className={index <= telemetry.stage ? "is-active" : ""} />)}</div></div>
         </section>
         <div className="top-actions">
-          <button className={!audio.muted ? "is-active" : ""} onClick={audio.toggle} aria-pressed={!audio.muted} aria-label={audio.muted ? "开启背景音乐" : "关闭背景音乐"}><i aria-hidden="true" /><span><small>声场</small><b>{audio.muted ? "关闭" : "开启"}</b></span></button>
+          <button className={!audio.muted ? "is-active" : ""} onClick={audio.toggle} aria-pressed={!audio.muted} aria-label={audio.muted ? "开启背景音乐" : "关闭背景音乐"}><i aria-hidden="true" /><span><small>音乐</small><b>{audio.muted ? "关闭" : "开启"}</b></span></button>
           <button className={quality === "high" ? "is-active" : ""} onClick={() => setQuality((value) => value === "high" ? "eco" : "high")} aria-pressed={quality === "high"} aria-label="切换画质"><i aria-hidden="true" /><span><small>画质</small><b>{quality === "high" ? "高精" : "省电"}</b></span></button>
-          <button className={paused ? "is-active" : ""} onClick={() => { if (paused) setPauseClosing(true); else { setPauseClosing(false); setPaused(true); } }} aria-pressed={paused} aria-label={paused ? "继续飞行" : "暂停飞行"}><i aria-hidden="true" /><span><small>旅程</small><b>{paused ? "继续" : "暂停"}</b></span></button>
+          <button className={cruising ? "is-active" : ""} onClick={toggleCruising} aria-pressed={cruising} aria-label={cruising ? "停止向前飞行" : "继续向前飞行"}><i aria-hidden="true" /><span><small>前进</small><b>{cruising ? "飞行中" : "已停下"}</b></span></button>
+          <button className={paused ? "is-active" : ""} onClick={() => { if (paused) setPauseClosing(true); else { setPauseClosing(false); setPaused(true); } }} aria-pressed={paused} aria-label={paused ? "继续飞行" : "暂停飞行"}><i aria-hidden="true" /><span><small>菜单</small><b>{paused ? "继续" : "暂停"}</b></span></button>
         </div>
-        {telemetry.progress < 12 && !paused && <p className="flight-prompt">让曦羽保持前行<br /><span>A / D 横移　W / S 升降　Shift 切换疾飞</span></p>}
+        {telemetry.progress < 12 && !paused && <p className="flight-prompt">让曦羽保持前行<br /><span>A / D 横移 · W / S 升降 · Shift 疾飞 · Space 停下</span></p>}
         <aside className={`artifact-card ${activeArtifact ? "is-visible" : ""}`} aria-live="polite">
           {activeArtifact && <div className="artifact-voice" key={activeArtifact.id}>
             <div className="artifact-signal" aria-hidden="true"><i /><i /><i /><i /></div>
@@ -739,17 +759,17 @@ export function JinshaExperience() {
           </div>}
         </aside>
         <footer className="flight-dock">
-          <div className="control-legend"><span><kbd>A</kbd><kbd>D</kbd> 左右</span><span><kbd>W</kbd><kbd>S</kbd> 升降</span><span><kbd>⇧</kbd> 切换疾飞</span></div>
+          <div className="control-legend"><span><kbd>A</kbd><kbd>D</kbd> 左右</span><span><kbd>W</kbd><kbd>S</kbd> 升降</span><span><kbd>⇧</kbd> 疾飞</span><span><kbd>Space</kbd> {cruising ? "停下" : "前进"}</span></div>
           <div className="journey-progress">
             <div className="progress-meta"><span>文明航迹</span><strong>{Math.round(progressPercent)}%</strong></div>
             <div className="progress-track"><i style={{ width: `${progressPercent}%` }} />{[31.7, 68.3, 100].map((position, index) => <b key={position} className={telemetry.stage >= index ? "is-passed" : ""} style={{ left: `${position}%` }} />)}</div>
             <div className="progress-labels"><span>自然</span><span>文明</span><span>重生</span></div>
           </div>
-          <div className="flight-state"><i />{boosting ? "疾飞中" : "巡航中"}</div>
+          <div className="flight-state"><i />{!cruising ? "停驻中" : boosting ? "疾飞中" : "巡航中"}</div>
         </footer>
         <div className="touch-controls" aria-label="触控飞行控制">
           <div className="touch-horizontal"><TouchButton label="左" direction="left" setControl={setControl} /><TouchButton label="右" direction="right" setControl={setControl} /></div>
-          <div className="touch-vertical"><TouchButton label="升" direction="up" setControl={setControl} /><TouchButton label="降" direction="down" setControl={setControl} /><TouchButton label={boosting ? "巡" : "疾"} direction="boost" setControl={setControl} /></div>
+          <div className="touch-vertical"><TouchButton label="升" direction="up" setControl={setControl} /><TouchButton label="降" direction="down" setControl={setControl} /><TouchButton label={boosting ? "巡" : "疾"} direction="boost" setControl={setControl} /><button className="touch-key touch-key--stop" aria-label={cruising ? "停止向前飞行" : "继续向前飞行"} onClick={toggleCruising}>{cruising ? "停" : "行"}</button></div>
         </div>
       </>}
 
