@@ -1,10 +1,11 @@
 "use client";
 
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Canvas, useFrame, useLoader } from "@react-three/fiber";
 import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
 gsap.registerPlugin(useGSAP);
 
@@ -49,96 +50,38 @@ const ARTIFACTS: Artifact[] = [
 ];
 
 function useAmbientSound() {
-  const graph = useRef<{ context: AudioContext; gain: GainNode; oscillators: OscillatorNode[]; timer: number | null } | null>(null);
+  const player = useRef<HTMLAudioElement | null>(null);
   const [muted, setMuted] = useState(false);
 
   const start = useCallback(() => {
-    if (graph.current || typeof window === "undefined") {
-      if (graph.current?.context.state === "suspended") void graph.current.context.resume();
-      return;
+    if (typeof window === "undefined") return;
+    if (!player.current) {
+      const track = new Audio("/audio/jinsha-stone-passage.mp3");
+      track.loop = true;
+      track.preload = "auto";
+      track.volume = 0.78;
+      player.current = track;
     }
-    const AudioContextClass = window.AudioContext;
-    if (!AudioContextClass) return;
-    const context = new AudioContextClass();
-    const gain = context.createGain();
-    const filter = context.createBiquadFilter();
-    filter.type = "lowpass";
-    filter.frequency.value = 480;
-    filter.Q.value = 0.72;
-    gain.gain.value = 0.22;
-    filter.connect(gain).connect(context.destination);
-    const oscillators = [73.42, 110, 164.81].map((frequency, index) => {
-      const oscillator = context.createOscillator();
-      oscillator.type = index === 1 ? "triangle" : "sine";
-      oscillator.frequency.value = frequency;
-      const voiceGain = context.createGain();
-      voiceGain.gain.value = [0.24, 0.085, 0.026][index];
-      oscillator.connect(voiceGain).connect(filter);
-      oscillator.start();
-      return oscillator;
-    });
-
-    const lfo = context.createOscillator();
-    const lfoGain = context.createGain();
-    lfo.type = "sine";
-    lfo.frequency.value = 0.055;
-    lfoGain.gain.value = 110;
-    lfo.connect(lfoGain).connect(filter.frequency);
-    lfo.start();
-    oscillators.push(lfo);
-    graph.current = { context, gain, oscillators, timer: null };
-
-    const notes = [293.66, 329.63, 440, 493.88, 587.33];
-    let step = 0;
-    const playChime = () => {
-      const audio = graph.current;
-      if (!audio || audio.context.state === "closed") return;
-      const now = audio.context.currentTime;
-      const note = notes[step % notes.length] * (step % 4 === 3 ? 0.5 : 1);
-      step += 1;
-      const voice = audio.context.createOscillator();
-      const overtone = audio.context.createOscillator();
-      const voiceGain = audio.context.createGain();
-      const pan = audio.context.createStereoPanner();
-      voice.type = "sine";
-      overtone.type = "sine";
-      voice.frequency.value = note;
-      overtone.frequency.value = note * 2.01;
-      pan.pan.value = Math.sin(step * 2.2) * 0.58;
-      voiceGain.gain.setValueAtTime(0.0001, now);
-      voiceGain.gain.exponentialRampToValueAtTime(0.12, now + 0.045);
-      voiceGain.gain.exponentialRampToValueAtTime(0.0001, now + 3.8);
-      voice.connect(voiceGain);
-      overtone.connect(voiceGain);
-      voiceGain.connect(pan).connect(audio.gain);
-      voice.start(now);
-      overtone.start(now);
-      voice.stop(now + 4);
-      overtone.stop(now + 4);
-      audio.timer = window.setTimeout(playChime, 4600 + (step % 3) * 1200);
-    };
-    graph.current.timer = window.setTimeout(playChime, 900);
-    void context.resume();
-  }, []);
+    player.current.muted = muted;
+    void player.current.play().catch(() => undefined);
+  }, [muted]);
 
   const toggle = useCallback(() => {
     setMuted((previous) => {
       const next = !previous;
-      const audio = graph.current;
-      if (audio) audio.gain.gain.setTargetAtTime(next ? 0 : 0.22, audio.context.currentTime, 0.12);
+      if (player.current) {
+        player.current.muted = next;
+        if (!next) void player.current.play().catch(() => undefined);
+      }
       return next;
     });
   }, []);
 
   useEffect(() => () => {
-    const audio = graph.current;
-    if (audio) {
-      graph.current = null;
-      if (audio.timer !== null) window.clearTimeout(audio.timer);
-      audio.oscillators.forEach((oscillator) => {
-        try { oscillator.stop(); } catch { /* the development hot reload may already have stopped this voice */ }
-      });
-      if (audio.context.state !== "closed") void audio.context.close().catch(() => undefined);
+    if (player.current) {
+      player.current.pause();
+      player.current.src = "";
+      player.current = null;
     }
   }, []);
 
@@ -184,8 +127,9 @@ function RouteFrames() {
           const stage = distance < 76 ? 0 : distance < 164 ? 1 : 2;
           const color = STAGES[stage].color;
           const rotation = Math.sin(index * 0.74) * (stage === 2 ? 0.22 : 0.07);
-          const width = stage === 0 ? 20 : stage === 1 ? 23 : 26;
-          const height = stage === 0 ? 11 : 12.5;
+          const frameSize = stage === 0 ? 18 : stage === 1 ? 20 : 22;
+          const width = frameSize;
+          const height = frameSize;
           const opacity = stage === 1 ? 0.17 : 0.1;
           return (
             <group key={index} position={[0, 1.1, -distance]} rotation={[0, 0, rotation]}>
@@ -299,23 +243,19 @@ function IntroArchitecture({ quality }: { quality: Quality }) {
       <boxGeometry args={[7.4 - index * 0.8, 0.12, 8]} />
       <meshToonMaterial color="#0b1818" emissive="#1d3935" emissiveIntensity={0.1} />
     </mesh>)}
-    <IntroSunbirds />
     <pointLight position={[0, 2, -3]} color="#d8a94a" intensity={quality === "high" ? 20 : 12} distance={18} />
     <pointLight position={[7, 1, -12]} color="#6ba69b" intensity={quality === "high" ? 14 : 8} distance={18} />
   </group>;
 }
 
 function IntroSunbirds() {
-  const orbit = useRef<THREE.Group>(null);
-  useFrame(({ clock }) => {
-    if (!orbit.current) return;
-    orbit.current.rotation.z = clock.elapsedTime * 0.09;
-    orbit.current.rotation.y = Math.sin(clock.elapsedTime * 0.18) * 0.1;
-  });
-  return <group ref={orbit} position={[0, 0.25, -2.65]}>
+  const arcLength = Math.PI * 0.29;
+  const segmentLength = Math.PI / 2;
+  const gapCenter = (arcLength + segmentLength) / 2;
+  return <group>
     {[0, 1, 2, 3].map((index) => {
-      const angle = index * Math.PI / 2 + Math.PI / 4;
-      return <group key={index} position={[Math.cos(angle) * 3.05, Math.sin(angle) * 2.1, 0]} rotation={[0, 0, angle + Math.PI / 2]} scale={0.72}>
+      const angle = index * segmentLength + gapCenter;
+      return <group key={index} position={[Math.cos(angle) * 3.05, Math.sin(angle) * 3.05, 0]} rotation={[0, 0, angle + Math.PI / 2]} scale={0.66}>
         <mesh scale={[0.55, 0.2, 0.18]}><sphereGeometry args={[1, 10, 7]} /><meshToonMaterial color="#ddb45a" emissive="#8f5d13" emissiveIntensity={0.9} /></mesh>
         <mesh position={[-0.48, 0, 0]} rotation={[0, 0, -0.42]} scale={[0.72, 0.08, 0.22]}><boxGeometry /><meshToonMaterial color="#f0ce77" emissive="#8f5d13" emissiveIntensity={0.72} /></mesh>
         <mesh position={[0.48, 0, 0]} rotation={[0, 0, 0.42]} scale={[0.72, 0.08, 0.22]}><boxGeometry /><meshToonMaterial color="#f0ce77" emissive="#8f5d13" emissiveIntensity={0.72} /></mesh>
@@ -410,49 +350,167 @@ function ArtifactVisual({ artifact, active }: { artifact: Artifact; active: bool
   );
 }
 
-function Xiyu({ playerRef, controls, started, cruising }: { playerRef: RefObject<THREE.Group | null>; controls: RefObject<Controls>; started: boolean; cruising: boolean }) {
-  const leftWing = useRef<THREE.Mesh>(null);
-  const rightWing = useRef<THREE.Mesh>(null);
+function Xiyu({ playerRef, controls, started, entering, cruising }: { playerRef: RefObject<THREE.Group | null>; controls: RefObject<Controls>; started: boolean; entering: boolean; cruising: boolean }) {
   const halo = useRef<THREE.Group>(null);
-  useFrame(({ clock, size }) => {
-    const boosting = controls.current.boost && cruising;
-    const flap = Math.sin(clock.elapsedTime * (boosting ? 10.5 : cruising ? 5.5 : 2.4)) * (boosting ? 0.18 : cruising ? 0.12 : 0.065);
-    if (leftWing.current) leftWing.current.rotation.z = -0.12 + flap;
-    if (rightWing.current) rightWing.current.rotation.z = 0.12 - flap;
+  const characterScale = useRef<THREE.Group>(null);
+  const modelMotion = useRef<THREE.Group>(null);
+  const motionPhase = useRef(0);
+  const idlePhase = useRef(0);
+  const cruiseBlend = useRef(1);
+  const boostBlend = useRef(0);
+  const gltf = useLoader(GLTFLoader, "/models/xiyu.glb");
+  const mixer = useMemo(() => new THREE.AnimationMixer(gltf.scene), [gltf.scene]);
+  const animationClip = useMemo(() => {
+    const source = gltf.animations[0];
+    if (!source) return null;
+    const clip = source.clone();
+    const proceduralBones = ["Bone_004", "Bone_008", "Bone_015", "Bone_016"];
+    clip.tracks = clip.tracks.filter((track) => !proceduralBones.some((name) => track.name.includes(name) && track.name.endsWith(".quaternion")));
+    clip.resetDuration();
+    return clip;
+  }, [gltf.animations]);
+  const rig = useMemo(() => {
+    const findBone = (name: string) => {
+      const object = gltf.scene.getObjectByName(name);
+      return object instanceof THREE.Bone ? { bone: object, bindRotation: object.quaternion.clone() } : null;
+    };
+    return {
+      leftLeg: findBone("Bone_004"),
+      leftAnkle: findBone("Bone_003"),
+      leftFoot: findBone("Bone_002"),
+      rightLeg: findBone("Bone_008"),
+      rightAnkle: findBone("Bone_007"),
+      rightFoot: findBone("Bone_006"),
+      capeLeft: findBone("Bone_015"),
+      capeRight: findBone("Bone_016"),
+    };
+  }, [gltf.scene]);
+  const proceduralRotation = useMemo(() => ({ euler: new THREE.Euler(), quaternion: new THREE.Quaternion() }), []);
+  const modelFit = useMemo(() => {
+    const bounds = new THREE.Box3().setFromObject(gltf.scene);
+    const center = bounds.getCenter(new THREE.Vector3());
+    const size = bounds.getSize(new THREE.Vector3());
+    return { center, scale: 3.65 / Math.max(size.x, size.y, size.z) };
+  }, [gltf.scene]);
+
+  useEffect(() => {
+    if (!animationClip) return;
+    const action = mixer.clipAction(animationClip);
+    action.zeroSlopeAtStart = true;
+    action.zeroSlopeAtEnd = true;
+    action.reset().setLoop(THREE.LoopRepeat, Infinity).fadeIn(0.35).play();
+    return () => {
+      action.fadeOut(0.2);
+      mixer.stopAllAction();
+    };
+  }, [animationClip, mixer]);
+
+  useEffect(() => {
+    gltf.scene.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return;
+      object.frustumCulled = false;
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      materials.forEach((material) => {
+        if (material instanceof THREE.MeshStandardMaterial) {
+          material.envMapIntensity = 0.72;
+          material.needsUpdate = true;
+        }
+      });
+    });
+  }, [gltf.scene]);
+
+  useFrame(({ size }, delta) => {
+    const cruiseTarget = started && cruising ? 1 : 0;
+    const boostTarget = controls.current.boost && cruising ? 1 : 0;
+    cruiseBlend.current = THREE.MathUtils.damp(cruiseBlend.current, cruiseTarget, cruiseTarget ? 2.25 : 1.35, delta);
+    boostBlend.current = THREE.MathUtils.damp(boostBlend.current, boostTarget, boostTarget ? 3.8 : 2.4, delta);
+    const flightWeight = cruiseBlend.current;
+    const boostWeight = boostBlend.current;
+    mixer.update(delta * (0.38 + flightWeight * 0.62 + boostWeight * 0.55));
+    const phaseSpeed = 1.2 + flightWeight * 2.9 + boostWeight * 2.1;
+    motionPhase.current += delta * phaseSpeed;
+    idlePhase.current += delta * 1.05;
+    const phase = motionPhase.current;
+    const idle = idlePhase.current;
+    const idleWeight = 1 - flightWeight;
+    const motionStrength = 0.22 + flightWeight * 0.78 + boostWeight * 0.35;
+    const normalFlightWeight = flightWeight * (1 - boostWeight * 0.84);
+    const legAmplitude = 0.15 * normalFlightWeight + 0.012 * idleWeight;
+    const idleLegShift = Math.sin(idle * 1.34) * 0.018 * idleWeight;
+    const boostLegPulse = Math.sin(phase * 1.72) * 0.018 * boostWeight;
+    const boostLegTuck = -0.17 * boostWeight;
+    const leftSwing = (Math.sin(phase) + Math.sin(phase * 2 + 0.45) * 0.13) * legAmplitude + idleLegShift + boostLegTuck + boostLegPulse;
+    const rightSwing = (Math.sin(phase + Math.PI) + Math.sin(phase * 2 + 1.15) * 0.13) * legAmplitude - idleLegShift * 0.72 + boostLegTuck - boostLegPulse * 0.68;
+    const stepStrength = motionStrength * (1 - boostWeight * 0.82);
+    const leftStep = (0.5 + Math.sin(phase - 0.55) * 0.5) * 0.085 * stepStrength + boostWeight * 0.052;
+    const rightStep = (0.5 + Math.sin(phase + Math.PI - 0.55) * 0.5) * 0.085 * stepStrength + boostWeight * 0.052;
+    const capeLift = 0.018 + flightWeight * 0.067 + boostWeight * 0.045;
+    const boostCapeFlutter = Math.sin(phase * 3.42 + 0.35) * 0.034 * boostWeight;
+    const capeWave = Math.sin(phase * 1.32) * 0.075 * motionStrength + Math.sin(idle * 1.08) * 0.024 * idleWeight + boostCapeFlutter;
+    const capeRipple = Math.sin(phase * 2.37 + 0.8) * 0.035 * motionStrength + Math.sin(idle * 1.73 + 0.4) * 0.014 * idleWeight + Math.sin(phase * 4.1) * 0.018 * boostWeight;
+    const applyRotation = (joint: { bone: THREE.Bone; bindRotation: THREE.Quaternion } | null, x: number, y: number, z: number) => {
+      if (!joint) return;
+      proceduralRotation.euler.set(x, y, z, "XYZ");
+      proceduralRotation.quaternion.setFromEuler(proceduralRotation.euler);
+      joint.bone.quaternion.copy(joint.bindRotation).multiply(proceduralRotation.quaternion);
+    };
+    applyRotation(rig.leftLeg, leftSwing, 0, leftSwing * 0.08);
+    applyRotation(rig.rightLeg, rightSwing, 0, -rightSwing * 0.08);
+    applyRotation(rig.leftAnkle, -leftSwing * 0.38 + leftStep, 0, 0);
+    applyRotation(rig.rightAnkle, -rightSwing * 0.38 + rightStep, 0, 0);
+    applyRotation(rig.leftFoot, -leftStep * 0.72, 0, 0);
+    applyRotation(rig.rightFoot, -rightStep * 0.72, 0, 0);
+    applyRotation(rig.capeLeft, -capeLift + capeRipple, capeWave * 0.18, capeWave);
+    applyRotation(rig.capeRight, -capeLift - capeRipple, -capeWave * 0.18, -capeWave * 0.88);
+    if (modelMotion.current) {
+      const idleBob = (Math.sin(idle) + Math.sin(idle * 0.47 + 0.8) * 0.34) * 0.045 * idleWeight;
+      const idleBreath = 1 + Math.sin(idle * 0.86) * 0.006 * idleWeight;
+      modelMotion.current.position.y = THREE.MathUtils.damp(modelMotion.current.position.y, idleBob, 3.1, delta);
+      modelMotion.current.rotation.x = THREE.MathUtils.damp(modelMotion.current.rotation.x, Math.sin(idle * 0.72) * 0.018 * idleWeight - boostWeight * 0.105, 3.6, delta);
+      modelMotion.current.rotation.y = THREE.MathUtils.damp(modelMotion.current.rotation.y, Math.PI + Math.sin(idle * 0.53) * 0.025 * idleWeight, 3, delta);
+      modelMotion.current.rotation.z = THREE.MathUtils.damp(modelMotion.current.rotation.z, Math.sin(idle * 0.64 + 0.9) * 0.025 * idleWeight + Math.sin(phase * 1.4) * 0.012 * boostWeight, 3.4, delta);
+      const modelScale = modelFit.scale * idleBreath * (1 - boostWeight * 0.025);
+      modelMotion.current.scale.setScalar(THREE.MathUtils.damp(modelMotion.current.scale.x, modelScale, 3.2, delta));
+    }
     if (halo.current) {
-      halo.current.rotation.z = clock.elapsedTime * (boosting ? 0.72 : 0.28);
-      halo.current.scale.setScalar(THREE.MathUtils.lerp(halo.current.scale.x, boosting ? 1.18 : 1, 0.08));
+      halo.current.rotation.z = (halo.current.rotation.z + delta * (0.1 + flightWeight * 0.18 + boostWeight * 0.44)) % (Math.PI * 2);
+      const viewportScale = size.width <= 720 ? 0.78 : 1;
+      halo.current.scale.setScalar(THREE.MathUtils.damp(halo.current.scale.x, viewportScale * (1 + boostWeight * 0.12), 3.6, delta));
+    }
+    if (characterScale.current) {
+      const viewportScale = size.width <= 720 ? 0.78 : 1;
+      const targetScale = started ? viewportScale : entering ? viewportScale * 0.82 : viewportScale * 0.74;
+      characterScale.current.scale.setScalar(THREE.MathUtils.damp(characterScale.current.scale.x, targetScale, entering ? 2.8 : 3.4, delta));
     }
     if (playerRef.current) {
-      const mobileScale = size.width <= 720 ? 0.78 : 1;
-      const targetScale = started ? mobileScale : mobileScale * 0.74;
-      const nextScale = THREE.MathUtils.lerp(playerRef.current.scale.x, targetScale, 0.055);
-      playerRef.current.scale.setScalar(nextScale);
-      playerRef.current.position.z = THREE.MathUtils.lerp(playerRef.current.position.z, started ? 0 : -2.6, 0.055);
+      playerRef.current.position.z = THREE.MathUtils.damp(playerRef.current.position.z, started ? 0 : entering ? -2 : -2.6, entering ? 2.8 : 3.4, delta);
     }
   });
   return (
     <group ref={playerRef}>
-      <mesh scale={[0.62, 0.34, 1.25]}><sphereGeometry args={[1, 24, 16]} /><meshToonMaterial color="#d9a43f" emissive="#75400b" emissiveIntensity={1.15} /></mesh>
-      <mesh position={[0, 0.16, -1.05]} scale={[0.38, 0.38, 0.38]}><sphereGeometry args={[1, 18, 12]} /><meshToonMaterial color="#efc66a" emissive="#75400b" emissiveIntensity={0.8} /></mesh>
-      <mesh ref={leftWing} position={[-1.22, 0.05, 0.05]} scale={[1.55, 0.07, 0.62]}><boxGeometry /><meshToonMaterial color="#e8dfc4" emissive="#8b671f" emissiveIntensity={0.55} /></mesh>
-      <mesh ref={rightWing} position={[1.22, 0.05, 0.05]} scale={[1.55, 0.07, 0.62]}><boxGeometry /><meshToonMaterial color="#e8dfc4" emissive="#8b671f" emissiveIntensity={0.55} /></mesh>
-      <mesh position={[-0.95, 0, 2.2]} scale={[0.07, 0.07, 2.8]}><boxGeometry /><meshBasicMaterial color="#ff8b32" transparent opacity={0.46} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
-      <mesh position={[0.95, 0, 2.2]} scale={[0.07, 0.07, 2.8]}><boxGeometry /><meshBasicMaterial color="#ff8b32" transparent opacity={0.46} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
-      <group ref={halo}>
-        {[0, 1, 2, 3].map((index) => <mesh key={index} rotation={[0, 0, index * Math.PI / 2]}><torusGeometry args={[2.2, 0.018, 6, 48, Math.PI * 0.38]} /><meshBasicMaterial color={index % 2 ? "#9bc8c4" : "#d8a94a"} transparent opacity={0.72} /></mesh>)}
+      <group ref={characterScale} scale={0.74}>
+        <group ref={modelMotion} scale={modelFit.scale} rotation={[0, Math.PI, 0]}>
+          <primitive object={gltf.scene} position={modelFit.center.clone().multiplyScalar(-1)} />
+        </group>
       </group>
-      <pointLight color="#ff7a2f" intensity={24} distance={13} />
+      <group ref={halo}>
+        {[0, 1, 2, 3].map((index) => <mesh key={index} rotation={[0, 0, index * Math.PI / 2]}><torusGeometry args={[3.05, 0.018, 6, 48, Math.PI * 0.29]} /><meshBasicMaterial color={index % 2 ? "#9bc8c4" : "#d8a94a"} transparent opacity={0.72} /></mesh>)}
+        {!started && <IntroSunbirds />}
+      </group>
+      <pointLight position={[0, 0.35, 1.6]} color="#f3c666" intensity={18} distance={11} />
     </group>
   );
 }
 
-function FlightScene({ started, paused, cruising, quality, controls, resetKey, onTelemetry }: { started: boolean; paused: boolean; cruising: boolean; quality: Quality; controls: RefObject<Controls>; resetKey: number; onTelemetry: (telemetry: Telemetry) => void }) {
+function FlightScene({ started, entering, paused, cruising, quality, controls, resetKey, onTelemetry }: { started: boolean; entering: boolean; paused: boolean; cruising: boolean; quality: Quality; controls: RefObject<Controls>; resetKey: number; onTelemetry: (telemetry: Telemetry) => void }) {
   const world = useRef<THREE.Group>(null);
   const player = useRef<THREE.Group>(null);
   const progress = useRef(0);
   const lateral = useRef(new THREE.Vector2(0, 0));
   const velocity = useRef(new THREE.Vector2(0, 0));
+  const forwardMotion = useRef(1);
+  const forwardBoost = useRef(0);
+  const wasStarted = useRef(started);
   const lastReport = useRef(0);
   const backgroundTarget = useMemo(() => new THREE.Color(ATMOSPHERE_COLORS[0]), []);
   const fogTarget = useMemo(() => new THREE.Color(FOG_COLORS[0]), []);
@@ -461,18 +519,40 @@ function FlightScene({ started, paused, cruising, quality, controls, resetKey, o
     progress.current = 0;
     lateral.current.set(0, 0);
     velocity.current.set(0, 0);
+    forwardMotion.current = 1;
+    forwardBoost.current = 0;
     onTelemetry({ progress: 0, stage: 0, artifactId: null, finished: false });
   }, [resetKey, onTelemetry]);
 
   useFrame((state, delta) => {
     const input = controls.current;
     const isMobileViewport = state.size.width <= 720;
+    const opticalCenterX = isMobileViewport ? 0 : -0.17;
+    if (started && !wasStarted.current) {
+      progress.current = 0;
+      lateral.current.set(0, 0);
+      velocity.current.set(0, 0);
+      forwardMotion.current = 1;
+      forwardBoost.current = 0;
+      if (world.current) world.current.position.z = 0;
+      if (player.current) {
+        player.current.position.x = opticalCenterX;
+        player.current.position.y = 0;
+        player.current.rotation.set(0, 0, 0);
+      }
+      state.camera.position.x = 0;
+    }
+    wasStarted.current = started;
+    const forwardTarget = started && !paused && cruising ? 1 : 0;
+    const boostTarget = forwardTarget && input.boost ? 1 : 0;
+    forwardMotion.current = THREE.MathUtils.damp(forwardMotion.current, forwardTarget, forwardTarget ? 2.1 : 1.15, delta);
+    forwardBoost.current = THREE.MathUtils.damp(forwardBoost.current, boostTarget, boostTarget ? 3.8 : 2.2, delta);
     const horizontalLimit = isMobileViewport ? 2.45 : 8.4;
     const verticalLimit = isMobileViewport ? 4.35 : 5.2;
     if (started && !paused && progress.current < ROUTE_LENGTH) {
       const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-      const speed = (reducedMotion ? 2.4 : 4.2) * (input.boost ? 1.82 : 1);
-      if (cruising) progress.current = Math.min(ROUTE_LENGTH, progress.current + delta * speed);
+      const speed = (reducedMotion ? 2.4 : 4.2) * (1 + forwardBoost.current * 0.82) * forwardMotion.current;
+      if (speed > 0.002) progress.current = Math.min(ROUTE_LENGTH, progress.current + delta * speed);
       const xAxis = THREE.MathUtils.clamp((input.right ? 1 : 0) - (input.left ? 1 : 0) + input.touchX, -1, 1);
       const yAxis = THREE.MathUtils.clamp((input.up ? 1 : 0) - (input.down ? 1 : 0) + input.touchY, -1, 1);
       const acceleration = input.boost ? 24 : 17;
@@ -494,16 +574,18 @@ function FlightScene({ started, paused, cruising, quality, controls, resetKey, o
     }
     if (world.current) world.current.position.z = progress.current;
     if (player.current) {
-      player.current.position.x = THREE.MathUtils.damp(player.current.position.x, lateral.current.x, 9, delta);
+      player.current.position.x = THREE.MathUtils.damp(player.current.position.x, lateral.current.x + opticalCenterX, 9, delta);
       player.current.position.y = THREE.MathUtils.damp(player.current.position.y, lateral.current.y + Math.sin(state.clock.elapsedTime * 1.4) * 0.1, 9, delta);
       player.current.rotation.z = THREE.MathUtils.damp(player.current.rotation.z, -velocity.current.x * 0.095, 5.2, delta);
-      player.current.rotation.x = THREE.MathUtils.damp(player.current.rotation.x, -velocity.current.y * 0.07 + (input.boost ? -0.12 : 0), 5.2, delta);
+      player.current.rotation.x = THREE.MathUtils.damp(player.current.rotation.x, -velocity.current.y * 0.07 - forwardBoost.current * 0.12, 5.2, delta);
       player.current.rotation.y = THREE.MathUtils.damp(player.current.rotation.y, velocity.current.x * 0.024, 4.2, delta);
     }
     const cameraFollow = isMobileViewport ? 0.5 : 0.2;
+    const entryComposition = started ? THREE.MathUtils.smoothstep(progress.current, 3, 32) : entering ? 0 : 1;
+    const cameraBaseY = THREE.MathUtils.lerp(0.35, 2.6, entryComposition);
     state.camera.position.x = THREE.MathUtils.damp(state.camera.position.x, lateral.current.x * cameraFollow - velocity.current.x * 0.045, 3.2, delta);
-    state.camera.position.y = THREE.MathUtils.damp(state.camera.position.y, 2.6 + lateral.current.y * 0.14 - velocity.current.y * 0.025, 3.2, delta);
-    state.camera.position.z = THREE.MathUtils.damp(state.camera.position.z, input.boost && cruising ? 12.6 : 11, 3.8, delta);
+    state.camera.position.y = THREE.MathUtils.damp(state.camera.position.y, cameraBaseY + lateral.current.y * 0.14 - velocity.current.y * 0.025, 3.2, delta);
+    state.camera.position.z = THREE.MathUtils.damp(state.camera.position.z, 11 + forwardBoost.current * 1.6, 3.8, delta);
     state.camera.lookAt(lateral.current.x * 0.24, lateral.current.y * 0.2, -7);
 
     const stageBlend = progress.current < 68 ? 0 : progress.current < 84 ? (progress.current - 68) / 16 : progress.current < 156 ? 1 : progress.current < 172 ? 1 + (progress.current - 156) / 16 : 2;
@@ -512,7 +594,7 @@ function FlightScene({ started, paused, cruising, quality, controls, resetKey, o
     const mix = stageBlend - stageIndex;
     backgroundTarget.set(ATMOSPHERE_COLORS[stageIndex]).lerp(new THREE.Color(ATMOSPHERE_COLORS[nextIndex]), mix);
     fogTarget.set(FOG_COLORS[stageIndex]).lerp(new THREE.Color(FOG_COLORS[nextIndex]), mix);
-    if (input.boost) backgroundTarget.offsetHSL(0, 0.04, 0.018);
+    if (forwardBoost.current > 0.001) backgroundTarget.offsetHSL(0, 0.04 * forwardBoost.current, 0.018 * forwardBoost.current);
     if (state.scene.background instanceof THREE.Color) state.scene.background.lerp(backgroundTarget, 1 - Math.exp(-delta * 0.65));
     if (state.scene.fog instanceof THREE.Fog) state.scene.fog.color.lerp(fogTarget, 1 - Math.exp(-delta * 0.65));
 
@@ -543,7 +625,9 @@ function FlightScene({ started, paused, cruising, quality, controls, resetKey, o
         <LightDust quality={quality} />
       </group>
       <SpeedLines quality={quality} controls={controls} cruising={cruising} />
-      <Xiyu playerRef={player} controls={controls} started={started} cruising={cruising} />
+      <Suspense fallback={null}>
+        <Xiyu playerRef={player} controls={controls} started={started} entering={entering} cruising={cruising} />
+      </Suspense>
     </>
   );
 }
@@ -551,6 +635,7 @@ function FlightScene({ started, paused, cruising, quality, controls, resetKey, o
 export function JinshaExperience() {
   const experienceRef = useRef<HTMLElement>(null);
   const [entered, setEntered] = useState(false);
+  const [entering, setEntering] = useState(false);
   const [paused, setPaused] = useState(false);
   const [pauseClosing, setPauseClosing] = useState(false);
   const [quality, setQuality] = useState<Quality>("high");
@@ -558,16 +643,22 @@ export function JinshaExperience() {
   const [boosting, setBoosting] = useState(false);
   const [cruising, setCruising] = useState(true);
   const [telemetry, setTelemetry] = useState<Telemetry>({ progress: 0, stage: 0, artifactId: null, finished: false });
+  const [displayArtifact, setDisplayArtifact] = useState<Artifact | null>(null);
   const controls = useRef<Controls>({ left: false, right: false, up: false, down: false, boost: false, touchX: 0, touchY: 0 });
   const touchDrag = useRef({ pointerId: -1, startX: 0, startY: 0 });
   const audio = useAmbientSound();
   const activeArtifact = ARTIFACTS.find((artifact) => artifact.id === telemetry.artifactId) ?? null;
+  const showFlightPrompt = entered && !entering && telemetry.progress < 12 && !activeArtifact && !paused;
   const stage = STAGES[telemetry.stage];
   const progressPercent = Math.min(100, telemetry.progress / ROUTE_LENGTH * 100);
 
   useEffect(() => {
     if (typeof window !== "undefined" && (window.innerWidth < 760 || navigator.hardwareConcurrency <= 4)) setQuality("eco");
   }, []);
+
+  useEffect(() => {
+    if (activeArtifact) setDisplayArtifact(activeArtifact);
+  }, [activeArtifact]);
 
   const toggleCruising = useCallback(() => {
     const next = !cruising;
@@ -659,12 +750,20 @@ export function JinshaExperience() {
     controls.current.touchX = Math.abs(x) < deadZone ? 0 : x;
     controls.current.touchY = Math.abs(y) < deadZone ? 0 : y;
   }, []);
-  const enterExperience = () => { audio.start(); setCruising(true); setEntered(true); setPauseClosing(false); setPaused(false); };
-  const replay = () => { setResetKey((value) => value + 1); setCruising(true); setPauseClosing(false); setPaused(false); setEntered(true); };
+  const enterExperience = () => {
+    if (entering || entered) return;
+    audio.start();
+    setCruising(false);
+    setPauseClosing(false);
+    setPaused(false);
+    setEntering(true);
+  };
+  const replay = () => { setResetKey((value) => value + 1); setEntering(false); setCruising(true); setPauseClosing(false); setPaused(false); setEntered(true); };
   const returnToIntro = () => {
     controls.current = { left: false, right: false, up: false, down: false, boost: false, touchX: 0, touchY: 0 };
     touchDrag.current.pointerId = -1;
     setBoosting(false);
+    setEntering(false);
     setCruising(true);
     setPauseClosing(false);
     setPaused(false);
@@ -672,20 +771,40 @@ export function JinshaExperience() {
     setResetKey((value) => value + 1);
   };
 
-  useGSAP(() => {
+  useGSAP((_, contextSafe) => {
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const duration = reduceMotion ? 0.01 : 0.72;
     const offset = reduceMotion ? 0 : 20;
     const timeline = gsap.timeline({ defaults: { duration, ease: "power3.out" } });
 
+    if (entering && !entered) {
+      const swapScene = contextSafe(() => setEntered(true));
+      timeline
+        .to(".intro", { autoAlpha: 0, x: reduceMotion ? 0 : -14, duration: reduceMotion ? 0.01 : 0.52, ease: "power2.inOut" }, 0)
+        .to(".scene", { autoAlpha: 0, duration: reduceMotion ? 0.01 : 0.68, ease: "power2.inOut" }, 0)
+        .call(swapScene, [], reduceMotion ? 0.02 : 0.7);
+      return;
+    }
+
+    if (entering && entered) {
+      const finishEntry = contextSafe(() => {
+        setEntering(false);
+        setCruising(true);
+      });
+      timeline
+        .fromTo(".scene", { autoAlpha: 0 }, { autoAlpha: 1, duration: reduceMotion ? 0.01 : 0.9, ease: "power2.inOut" }, 0)
+        .call(finishEntry, [], reduceMotion ? 0.02 : 0.92);
+      return;
+    }
+
     if (!entered) {
       timeline
         .fromTo(".scene", { autoAlpha: 0.35, scale: 1.035 }, { autoAlpha: 1, scale: 1, duration: reduceMotion ? 0.01 : 1.45 }, 0)
         .fromTo(".eyebrow", { autoAlpha: 0, x: -offset }, { autoAlpha: 1, x: 0 }, 0.28)
-        .fromTo(".intro h1 span", { autoAlpha: 0, y: offset * 1.4, rotationX: reduceMotion ? 0 : -18 }, { autoAlpha: 1, y: 0, rotationX: 0, stagger: 0.16, duration: reduceMotion ? 0.01 : 0.9 }, 0.42)
-        .fromTo(".intro-subtitle", { autoAlpha: 0, y: offset }, { autoAlpha: 1, y: 0 }, 0.9)
-        .fromTo(".intro-entry > *", { autoAlpha: 0, y: offset }, { autoAlpha: 1, y: 0, stagger: 0.14 }, 1.08)
-        .fromTo(".intro-route > *", { autoAlpha: 0, scaleX: 0.6 }, { autoAlpha: 1, scaleX: 1, stagger: 0.09, transformOrigin: "left center" }, 1.35);
+        .fromTo(".intro h1", { autoAlpha: 0, y: reduceMotion ? 0 : 20 }, { autoAlpha: 1, y: 0, duration: reduceMotion ? 0.01 : 0.9, ease: "power3.out" }, 0.42)
+        .fromTo(".intro-subtitle", { autoAlpha: 0, y: offset }, { autoAlpha: 1, y: 0 }, 1.12)
+        .fromTo(".intro-entry > *", { autoAlpha: 0, y: offset }, { autoAlpha: 1, y: 0, stagger: 0.14 }, 1.3)
+        .fromTo(".intro-route > *", { autoAlpha: 0, scaleX: 0.6 }, { autoAlpha: 1, scaleX: 1, stagger: 0.09, transformOrigin: "left center" }, 1.57);
       return;
     }
 
@@ -697,28 +816,51 @@ export function JinshaExperience() {
       .fromTo(".top-actions", { autoAlpha: 0 }, { autoAlpha: 1, duration: reduceMotion ? 0.01 : 0.3 }, 0.16)
       .fromTo(".top-actions button", { autoAlpha: 0, y: -offset, rotationX: reduceMotion ? 0 : -14 }, { autoAlpha: 1, y: 0, rotationX: 0, stagger: 0.1 }, 0.2)
       .fromTo(".flight-dock", { autoAlpha: 0, y: offset }, { autoAlpha: 1, y: 0, duration: reduceMotion ? 0.01 : 0.9 }, 0.38);
-    const flightPrompt = experienceRef.current?.querySelector(".flight-prompt");
-    if (flightPrompt) timeline.fromTo(flightPrompt, { autoAlpha: 0, y: offset * 0.6 }, { autoAlpha: 1, y: 0 }, 0.62);
     timeline.fromTo(".touch-controls", { autoAlpha: 0, y: offset }, { autoAlpha: 1, y: 0 }, 0.48);
-  }, { scope: experienceRef, dependencies: [entered, resetKey], revertOnUpdate: true });
+  }, { scope: experienceRef, dependencies: [entered, entering, resetKey], revertOnUpdate: true });
+
+  useGSAP(() => {
+    const prompt = experienceRef.current?.querySelector(".flight-prompt");
+    if (!prompt || !entered) return;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    gsap.killTweensOf(prompt);
+    if (showFlightPrompt) {
+      gsap.fromTo(prompt,
+        { autoAlpha: 0, y: reduceMotion ? 0 : -10 },
+        { autoAlpha: 1, y: 0, duration: reduceMotion ? 0.01 : 0.58, ease: "power3.out", overwrite: "auto" },
+      );
+      return;
+    }
+    gsap.to(prompt, { autoAlpha: 0, y: reduceMotion ? 0 : -14, duration: reduceMotion ? 0.01 : 0.42, ease: "power2.inOut", overwrite: "auto" });
+  }, { scope: experienceRef, dependencies: [entered, showFlightPrompt] });
 
   useGSAP(() => {
     const card = experienceRef.current?.querySelector(".artifact-card");
     if (!card) return;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    gsap.killTweensOf([card, ...card.querySelectorAll("*")]);
     if (!activeArtifact) {
-      gsap.set(card, { autoAlpha: 0 });
+      if (!displayArtifact) {
+        gsap.set(card, { autoAlpha: 0 });
+        return;
+      }
+      const exitTimeline = gsap.timeline({ defaults: { ease: "power2.inOut" } });
+      exitTimeline
+        .to([".artifact-kicker", ".artifact-card h3", ".artifact-voice-line", ".artifact-context", ".artifact-meta"], { autoAlpha: 0, y: reduceMotion ? 0 : -7, duration: reduceMotion ? 0.01 : 0.28, stagger: 0.025 }, 0)
+        .to(".artifact-signal i", { autoAlpha: 0, scaleY: 0.25, duration: reduceMotion ? 0.01 : 0.24, stagger: 0.03, transformOrigin: "center bottom" }, 0.04)
+        .to(card, { autoAlpha: 0, y: reduceMotion ? 0 : -12, scale: reduceMotion ? 1 : 0.985, duration: reduceMotion ? 0.01 : 0.36 }, 0.12);
       return;
     }
-    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!displayArtifact || displayArtifact.id !== activeArtifact.id) return;
     const duration = reduceMotion ? 0.01 : 0.62;
     const timeline = gsap.timeline({ defaults: { duration, ease: "power3.out" } });
     timeline
-      .fromTo(".artifact-card", { autoAlpha: 0, x: reduceMotion ? 0 : 30, scale: reduceMotion ? 1 : 0.965 }, { autoAlpha: 1, x: 0, scale: 1 }, 0)
-      .fromTo(".artifact-signal i", { scaleY: 0 }, { scaleY: 1, stagger: 0.11, transformOrigin: "center bottom" }, 0.12)
+      .fromTo(".artifact-card", { autoAlpha: 0, x: reduceMotion ? 0 : 30, y: 0, scale: reduceMotion ? 1 : 0.965 }, { autoAlpha: 1, x: 0, y: 0, scale: 1 }, 0)
+      .fromTo(".artifact-signal i", { autoAlpha: 0, scaleY: 0 }, { autoAlpha: 1, scaleY: 1, stagger: 0.11, transformOrigin: "center bottom" }, 0.12)
       .fromTo([".artifact-kicker", ".artifact-card h3"], { autoAlpha: 0, y: 12 }, { autoAlpha: 1, y: 0, stagger: 0.12 }, 0.2)
       .fromTo(".artifact-voice-line", { autoAlpha: 0, y: 14 }, { autoAlpha: 1, y: 0, duration: reduceMotion ? 0.01 : 0.85 }, 0.48)
       .fromTo([".artifact-context", ".artifact-meta"], { autoAlpha: 0, y: 10 }, { autoAlpha: 1, y: 0, stagger: 0.14 }, 0.92);
-  }, { scope: experienceRef, dependencies: [activeArtifact?.id], revertOnUpdate: true });
+  }, { scope: experienceRef, dependencies: [activeArtifact?.id, displayArtifact?.id] });
 
   useGSAP(() => {
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -742,10 +884,10 @@ export function JinshaExperience() {
   }, { scope: experienceRef, dependencies: [paused, pauseClosing, telemetry.finished], revertOnUpdate: true });
 
   return (
-    <main ref={experienceRef} className={`experience ${entered ? "is-running" : "is-intro"} ${boosting && cruising && entered && !paused ? "is-boosting" : ""} ${!cruising && entered ? "is-stopped" : ""}`}>
+    <main ref={experienceRef} className={`experience ${entered ? "is-running" : "is-intro"} ${entering ? "is-entering" : ""} ${boosting && cruising && entered && !paused ? "is-boosting" : ""} ${!cruising && entered ? "is-stopped" : ""}`}>
       <div className="scene" aria-label="羽见千年三维体验场景">
         <Canvas camera={{ position: [0, 2.6, 11], fov: 58 }} dpr={quality === "high" ? [1, 1.65] : [0.75, 1.1]} gl={{ antialias: quality === "high", powerPreference: quality === "high" ? "high-performance" : "low-power" }}>
-          <FlightScene started={entered} paused={paused || telemetry.finished} cruising={cruising} quality={quality} controls={controls} resetKey={resetKey} onTelemetry={reportTelemetry} />
+          <FlightScene started={entered} entering={entering} paused={paused || telemetry.finished} cruising={cruising} quality={quality} controls={controls} resetKey={resetKey} onTelemetry={reportTelemetry} />
         </Canvas>
       </div>
 
@@ -768,9 +910,9 @@ export function JinshaExperience() {
 
       {!entered && <section className="intro" aria-labelledby="experience-title">
         <p className="eyebrow">JINSHA IMMERSIVE ARCHIVE</p>
-        <h1 id="experience-title"><span>羽见</span><span>千年</span></h1>
+        <h1 id="experience-title">羽见千年</h1>
         <p className="intro-subtitle">金沙沉浸式数字体验</p>
-        <div className="intro-entry"><p className="intro-copy">跟随曦羽穿过自然、文明与记忆，在流动的光中重新看见金沙。</p><button className="enter-button" onClick={enterExperience}><span>进入体验</span><span aria-hidden="true">→</span></button></div>
+        <div className="intro-entry"><p className="intro-copy">跟随曦羽穿过自然、文明与记忆，在流动的光中重新看见金沙。</p><button className="enter-button intro-enter-button" onClick={enterExperience} disabled={entering}><span className="enter-button-copy"><small>开启航迹</small><strong>进入体验</strong></span><span className="enter-button-icon" aria-hidden="true">→</span></button></div>
         <div className="intro-route" aria-hidden="true"><span>自然之源</span><i /><span>文明之光</span><i /><span>记忆重生</span></div>
       </section>}
 
@@ -781,18 +923,17 @@ export function JinshaExperience() {
         <div className="top-actions">
           <button className={`action-audio ${!audio.muted ? "is-active" : ""}`} onClick={audio.toggle} aria-pressed={!audio.muted} aria-label={audio.muted ? "开启背景音乐" : "关闭背景音乐"}><i aria-hidden="true" /><span><small>音乐</small><b>{audio.muted ? "关闭" : "开启"}</b></span></button>
           <button className={`action-quality ${quality === "high" ? "is-active" : ""}`} onClick={() => setQuality((value) => value === "high" ? "eco" : "high")} aria-pressed={quality === "high"} aria-label="切换画质"><i aria-hidden="true" /><span><small>画质</small><b>{quality === "high" ? "高精" : "省电"}</b></span></button>
-          <button className={`action-cruise ${cruising ? "is-active" : ""}`} onClick={toggleCruising} aria-pressed={cruising} aria-label={cruising ? "停止向前飞行" : "继续向前飞行"}><i aria-hidden="true" /><span><small>前进</small><b>{cruising ? "飞行中" : "已停下"}</b></span></button>
           <button className={`action-pause ${paused ? "is-active" : ""}`} onClick={() => { if (paused) setPauseClosing(true); else { setPauseClosing(false); setPaused(true); } }} aria-pressed={paused} aria-label={paused ? "继续飞行" : "暂停飞行"}><i aria-hidden="true" /><span><small>菜单</small><b>{paused ? "继续" : "暂停"}</b></span></button>
         </div>
-        {telemetry.progress < 12 && !paused && <p className="flight-prompt">让曦羽保持前行<br /><span className="desktop-flight-instruction">A / D 横移 · W / S 升降 · Shift 疾飞 · Space 停下</span><span className="mobile-flight-instruction">在画面上拖动 · 控制飞行方向</span></p>}
+        <p className="flight-prompt" aria-hidden={!showFlightPrompt}>让曦羽保持前行<br /><span className="desktop-flight-instruction">A / D 横移 · W / S 升降 · Shift 疾飞 · Space 停下</span><span className="mobile-flight-instruction">在画面上拖动 · 控制飞行方向</span></p>
         <aside className={`artifact-card ${activeArtifact ? "is-visible" : ""}`} aria-live="polite">
-          {activeArtifact && <div className="artifact-voice" key={activeArtifact.id}>
+          {displayArtifact && <div className="artifact-voice" key={displayArtifact.id}>
             <div className="artifact-signal" aria-hidden="true"><i /><i /><i /><i /></div>
             <p className="artifact-kicker">文物回声 · MEMORY SPEAKS</p>
-            <h3>{activeArtifact.name}</h3>
-            <blockquote className="artifact-voice-line">{activeArtifact.voice}</blockquote>
-            <p className="artifact-context">{activeArtifact.caption}</p>
-            <div className="artifact-meta"><span>记忆节点 {String(ARTIFACTS.indexOf(activeArtifact) + 1).padStart(2, "0")} / {String(ARTIFACTS.length).padStart(2, "0")}</span><i /><span>{STAGES[activeArtifact.stage].name}</span></div>
+            <h3>{displayArtifact.name}</h3>
+            <blockquote className="artifact-voice-line">{displayArtifact.voice}</blockquote>
+            <p className="artifact-context">{displayArtifact.caption}</p>
+            <div className="artifact-meta"><span>记忆节点 {String(ARTIFACTS.indexOf(displayArtifact) + 1).padStart(2, "0")} / {String(ARTIFACTS.length).padStart(2, "0")}</span><i /><span>{STAGES[displayArtifact.stage].name}</span></div>
           </div>}
         </aside>
         <footer className="flight-dock">
