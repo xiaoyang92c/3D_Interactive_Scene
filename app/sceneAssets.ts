@@ -1,0 +1,50 @@
+export type Vector3Tuple = [number, number, number];
+
+export type SceneTransform = {
+  position: Vector3Tuple;
+  rotation: Vector3Tuple;
+  scale: Vector3Tuple;
+};
+
+export type SceneAsset = {
+  id: string;
+  name: string;
+  voice: string;
+  caption: string;
+  url: string;
+  distance: number;
+  stage: number;
+  targetSize: number;
+  position: Vector3Tuple;
+  rotation: Vector3Tuple;
+};
+
+export const ROUTE_LENGTH = 1120;
+
+export const STAGES = [
+  { index: "壹", name: "自然之源", range: [0, 335], color: "#78a596" },
+  { index: "贰", name: "文明之光", range: [335, 755], color: "#d8a94a" },
+  { index: "叁", name: "记忆重生", range: [755, ROUTE_LENGTH], color: "#9d79cf" },
+] as const;
+
+export const SCENE_ASSETS: SceneAsset[] = [
+  { id: "cave", name: "岩层洞穴隧道", voice: "我好像听见了，三千年前的土地还在呼吸。", caption: "金沙遗址位于成都平原，主体文化遗存主要属于商代晚期至西周时期，是认识古蜀文明的重要遗址。", url: "/models/jinsha/01-cave.glb", distance: 60, stage: 0, targetSize: 20, position: [0, -0.4, -60], rotation: [0, 0, 0] },
+  { id: "ancient-tree", name: "古树", voice: "看，那棵树……它像是从千年前一直长到了这里。", caption: "金沙遗址公园最大限度保留了乡土植物群落与原有地形地貌，延续这片土地的自然气息。", url: "/models/jinsha/02-ancient-tree.glb", distance: 150, stage: 0, targetSize: 16, position: [-2.2, -0.5, -150], rotation: [0, -0.08, 0] },
+  { id: "landscape-birds", name: "山川投影", voice: "山与水，藏着这片土地最早的记忆。", caption: "金沙祭祀区沿古河道分布，山川、水土构成了古蜀先民生活与祭祀活动所处的重要自然环境。", url: "/models/jinsha/03-landscape-birds.glb", distance: 225, stage: 0, targetSize: 10, position: [2, 0.4, -225], rotation: [0, 0.12, 0] },
+  { id: "stage-two-gate", name: "藤蔓 / 草木", voice: "生命从岩石间醒来，时间也跟着向前生长。", caption: "金沙遗址及周边发现的古木等遗存，反映了约三千年前成都平原良好的自然生态。", url: "/models/jinsha/04-stage-two-gate.glb", distance: 310, stage: 0, targetSize: 15, position: [0, 0, -310], rotation: [0, 0, 0] },
+  { id: "sunbird", name: "太阳神鸟", voice: "四只神鸟围着太阳，朝同一个方向飞去。", caption: "金沙太阳神鸟金饰呈圆环形，由内层十二道顺时针旋转的齿状芒纹和外层四只逆时针飞行的鸟组成，是金沙最具代表性的文物之一。", url: "/models/jinsha/05-sunbird.glb", distance: 380, stage: 1, targetSize: 7.5, position: [-2, 1, -380], rotation: [0, -0.12, 0] },
+  { id: "golden-mask", name: "黄金面具", voice: "它一直注视着这里，也注视着我们。", caption: "金沙出土大金面具呈立体脸谱，双眼镂空、耳部外展、面相近方，体现了商周时期古蜀金器制作与造型艺术。", url: "/models/jinsha/06-mask.glb", distance: 445, stage: 1, targetSize: 8.5, position: [2.4, 0.5, -445], rotation: [0, 0.1, 0] },
+  { id: "jade-bi", name: "玉璧", voice: "圆环无声，却像在告诉我们天地的方向。", caption: "金沙祭祀遗存出土大量玉器。璧等玉礼器与古蜀先民对天地四方、自然山川的敬仰和祭祀观念有关。", url: "/models/jinsha/07-jade-bi.glb", distance: 510, stage: 1, targetSize: 8, position: [-2.2, 0.8, -510], rotation: [0, -0.08, 0] },
+  { id: "bronze-pattern", name: "青铜纹样墙", voice: "这些纹样，是古蜀留下的另一种语言。", caption: "金沙遗址出土了铜鸟、铜铃、铜挂饰、铜牛首等青铜器，展现了古蜀独特的青铜艺术与信仰世界。", url: "/models/jinsha/08-bronze-pattern.glb", distance: 575, stage: 1, targetSize: 9.5, position: [2.4, 0.3, -575], rotation: [0, 0.1, 0] },
+  { id: "ritual", name: "古蜀祭坛", voice: "这里曾有人向天地发问，也曾把答案留在土地里。", caption: "金沙祭祀区是古蜀王国重要的滨河祭祀场所，出土金、铜、玉、石器及大量象牙等祭祀遗存。", url: "/models/jinsha/09-ritual.glb", distance: 650, stage: 1, targetSize: 12, position: [-1.8, -0.7, -650], rotation: [0, -0.08, 0] },
+  { id: "stage-three-gate", name: "记忆序门", voice: "", caption: "", url: "/models/jinsha/10-stage-three-gate.glb", distance: 730, stage: 1, targetSize: 15, position: [0, 0, -730], rotation: [0, 0, 0] },
+  { id: "mask-fragment", name: "黄金面具碎片", voice: "完整的面容散开了，可它的目光还在。", caption: "金沙出土大金面具呈立体脸谱，体现了商周时期古蜀金器制作与造型艺术；本项目将面具拆解为独立记忆单元，在航行中重新建立注视关系。", url: "/models/jinsha/11-mask-fragment.glb", distance: 800, stage: 2, targetSize: 8, position: [-2.1, 0.8, -800], rotation: [0, -0.12, 0] },
+  { id: "jade-fragment", name: "玉璧环形结构", voice: "圆环被拆开了，却没有失去它原来的方向。", caption: "璧等玉礼器与古蜀先民对天地四方、自然山川的敬仰和祭祀观念有关；本项目将环形结构拆解为航迹中的记忆片段。", url: "/models/jinsha/12-jade-fragment.glb", distance: 865, stage: 2, targetSize: 7.5, position: [2.2, 1, -865], rotation: [0, 0.12, 0] },
+  { id: "bronze-fragment", name: "青铜纹样碎片", voice: "古老的纹样，换了一条路继续向前。", caption: "金沙青铜器展现了古蜀独特的艺术与信仰世界；本项目将青铜纹样转译为漂浮的记忆坐标。", url: "/models/jinsha/13-bronze-fragment.glb", distance: 930, stage: 2, targetSize: 8, position: [-2, 0.5, -930], rotation: [0, -0.1, 0] },
+  { id: "sunbird-fragment", name: "太阳神鸟碎片", voice: "你看，太阳正在重新聚拢，就如同那些隐匿的文明碎片也在渐渐聚拢。", caption: "太阳神鸟金饰由十二道旋转芒纹与四只飞鸟组成；本项目让离散的轨迹逐渐闭合，使文明符号从记忆中重新显现。", url: "/models/jinsha/14-sunbird-fragment.glb", distance: 995, stage: 2, targetSize: 8.5, position: [2.1, 0.8, -995], rotation: [0, 0.12, 0] },
+  { id: "civilization-gate", name: "文明之门", voice: "走过这扇门，记忆就不会停在三千年前，带着这段记忆将其延续吧。", caption: "太阳神鸟是中国文化遗产标志，图案寓意追求光明、团结奋进、和谐包容，成为连接古蜀文明与当代文化的重要符号。", url: "/models/jinsha/15-civilization-gate.glb", distance: 1070, stage: 2, targetSize: 18, position: [0, 0, -1070], rotation: [0, 0, 0] },
+];
+
+export const createDefaultTransforms = (): Record<string, SceneTransform> => Object.fromEntries(
+  SCENE_ASSETS.map((asset) => [asset.id, { position: [...asset.position] as Vector3Tuple, rotation: [...asset.rotation] as Vector3Tuple, scale: [5, 5, 5] }]),
+);
