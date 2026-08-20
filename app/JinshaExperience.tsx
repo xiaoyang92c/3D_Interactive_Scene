@@ -16,6 +16,7 @@ type Quality = "high" | "eco";
 type EditorMode = "translate" | "rotate" | "scale";
 type AudioMix = { master: number; background: number; effects: number };
 type SceneMotion = "static" | "float" | "rotate-z-float";
+type CollisionHit = { distance: number; normal: THREE.Vector3; assetId: string };
 
 type Controls = { left: boolean; right: boolean; up: boolean; down: boolean; boost: boolean; touchX: number; touchY: number };
 type Telemetry = { progress: number; lateral: [number, number]; stage: number; artifactId: string | null; finished: boolean };
@@ -24,9 +25,20 @@ const ATMOSPHERE_COLORS = ["#061313", "#160d06", "#0c0717"] as const;
 const FOG_COLORS = ["#0a1d1c", "#241408", "#170d25"] as const;
 
 const SCENE_TRANSFORMS_KEY = "jinsha-scene-transforms-v1";
-const AUDIO_MIX_KEY = "jinsha-audio-mix-v1";
+const AUDIO_MIX_KEY = "jinsha-audio-mix-v2";
+const CRITICAL_MODEL_URLS = ["/models/xiyu.glb", ...SCENE_ASSETS.slice(0, 4).map((asset) => asset.url)] as const;
 const CAVE_COLLISION_EXCLUSIONS = new Set(["cave"]);
 const FORWARD_COLLISION_EXCLUSIONS = new Set(["cave", "civilization-gate"]);
+const CAMERA_COLLISION_EXCLUSIONS = new Set<string>();
+const CAMERA_CAVE_COLLISION_EXCLUSIONS = new Set(["cave"]);
+const PLAYER_COLLISION_RADIUS = 0.82;
+const CAMERA_COLLISION_RADIUS = 0.5;
+const COLLISION_SKIN = 0.07;
+const CAMERA_COLLISION_HOLD_SECONDS = 0.14;
+const CAMERA_MAX_APPROACH_SPEED = 4.2;
+const CAMERA_MAX_RELEASE_SPEED = 2.6;
+const CAMERA_MAX_COMPRESSION = 1.35;
+const INITIAL_ARTIFACT_REVEAL_PROGRESS = 24;
 const SCENE_MOTIONS: Record<string, SceneMotion> = {
   cave: "static",
   "ancient-tree": "float",
@@ -155,7 +167,7 @@ function useBoostSound(active: boolean, muted: boolean, effectsVolume: number) {
     const audible = active && !muted;
     const targetVolume = audible ? THREE.MathUtils.clamp(0.64 * effectsVolume, 0, 1) : 0;
     const startVolume = track.volume;
-    const duration = targetVolume > startVolume ? 1200 : 1450;
+    const duration = targetVolume > startVolume ? 1500 : 1750;
     const startedAt = performance.now();
     if (audible) void track.play().catch(() => undefined);
 
@@ -548,6 +560,7 @@ function SceneModel({ asset, transform, quality, editing, selected, onSelect, re
   const group = useRef<THREE.Group>(null);
   const motionGroup = useRef<THREE.Group>(null);
   const colliderGroup = useRef<THREE.Group>(null);
+  const animationMixer = useRef<THREE.AnimationMixer | null>(null);
   const [model, setModel] = useState<THREE.Group | null>(null);
   const [collider, setCollider] = useState<THREE.Group | null>(null);
   const [failed, setFailed] = useState(false);
@@ -557,6 +570,8 @@ function SceneModel({ asset, transform, quality, editing, selected, onSelect, re
   useFrame(({ clock }, delta) => {
     const target = motionGroup.current;
     if (!target) return;
+
+    if (!editing) animationMixer.current?.update(delta);
 
     if (editing || motion === "static") {
       target.position.y = 0;
@@ -585,6 +600,7 @@ function SceneModel({ asset, transform, quality, editing, selected, onSelect, re
   useEffect(() => {
     let disposed = false;
     let loaded: THREE.Group | null = null;
+    let loadedMixer: THREE.AnimationMixer | null = null;
     const loader = new GLTFLoader().setDRACOLoader(dracoLoader);
     loader.load(asset.url, (gltf) => {
       loaded = gltf.scene;
@@ -592,16 +608,27 @@ function SceneModel({ asset, transform, quality, editing, selected, onSelect, re
       loaded.traverse((object) => {
         if (object instanceof THREE.Light || object instanceof THREE.Camera) removable.push(object);
         if (!(object instanceof THREE.Mesh)) return;
-        object.frustumCulled = false;
+        object.frustumCulled = true;
         object.castShadow = false;
         object.receiveShadow = false;
       });
       removable.forEach((object) => object.parent?.remove(object));
-      if (disposed) disposeModel(loaded);
-      else setModel(loaded);
+      if (disposed) {
+        disposeModel(loaded);
+        return;
+      }
+      if (gltf.animations.length > 0) {
+        loadedMixer = new THREE.AnimationMixer(loaded);
+        gltf.animations.forEach((clip) => loadedMixer?.clipAction(clip).reset().setLoop(THREE.LoopRepeat, Infinity).play());
+        animationMixer.current = loadedMixer;
+      }
+      setModel(loaded);
     }, undefined, () => { if (!disposed) setFailed(true); });
     return () => {
       disposed = true;
+      loadedMixer?.stopAllAction();
+      if (loaded) loadedMixer?.uncacheRoot(loaded);
+      if (animationMixer.current === loadedMixer) animationMixer.current = null;
       if (loaded) disposeModel(loaded);
     };
   }, [asset.url]);
@@ -701,12 +728,32 @@ function SceneModel({ asset, transform, quality, editing, selected, onSelect, re
   </group>;
 }
 
-function getArtifactContextStyle(caption: string): CSSProperties {
-  const characterCount = Array.from(caption.replace(/\s+/g, "")).length;
-  const preferredCharactersPerLine = 34;
-  const lineCount = Math.max(1, Math.ceil(characterCount / preferredCharactersPerLine));
-  const balancedCharactersPerLine = Math.ceil(characterCount / lineCount);
-  const targetWidth = THREE.MathUtils.clamp(balancedCharactersPerLine * 12.7, 230, 620);
+const LINE_END_PUNCTUATION = new Set(Array.from("，。；：、！？,.!?;:）】》」』"));
+
+function getArtifactCaptionLines(caption: string): string[] {
+  const characters = Array.from(caption.trim());
+  if (characters.length <= 36) return [characters.join("")];
+
+  const target = Math.ceil(characters.length / 2);
+  const minimumLineLength = Math.min(18, Math.floor(characters.length * 0.38));
+  let bestIndex = target;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (let index = minimumLineLength; index <= characters.length - minimumLineLength; index += 1) {
+    if (LINE_END_PUNCTUATION.has(characters[index - 1]) || LINE_END_PUNCTUATION.has(characters[index])) continue;
+    const score = Math.abs(index - target) + Math.abs(index - (characters.length - index)) * 0.08;
+    if (score < bestScore) {
+      bestIndex = index;
+      bestScore = score;
+    }
+  }
+
+  return [characters.slice(0, bestIndex).join(""), characters.slice(bestIndex).join("")];
+}
+
+function getArtifactContextStyle(lines: string[]): CSSProperties {
+  const longestLine = Math.max(...lines.map((line) => Array.from(line).length), 18);
+  const targetWidth = THREE.MathUtils.clamp(longestLine * 12.7, 230, 620);
   return { "--artifact-copy-width": `${Math.round(targetWidth)}px` } as CSSProperties;
 }
 
@@ -815,7 +862,7 @@ function SceneAssetField({ progressRef, transforms, quality, editing, selectedId
     const offset = distance - streamCenter;
     const editorCenter = selectedId ? -transforms[selectedId].position[2] : streamCenter;
     if (editing) return Math.abs(distance - editorCenter) <= 175;
-    return (offset >= -165 && offset <= 135) || (streamCenter < 12 && distance < 240);
+    return (offset >= -125 && offset <= 110) || (streamCenter < 12 && distance < 190);
   });
   const target = selectedId ? assetObjects[selectedId] ?? null : null;
   const captureTransform = useCallback((id: string, object: THREE.Object3D) => {
@@ -1113,6 +1160,9 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
   const lateral = useRef(new THREE.Vector2(0, 0));
   const velocity = useRef(new THREE.Vector2(0, 0));
   const colliderObjects = useRef<Record<string, { object: THREE.Group; bounds: THREE.Box3 }>>({});
+  const cameraCollisionDistance = useRef(12);
+  const cameraCollisionTargetDistance = useRef(12);
+  const cameraCollisionHold = useRef(0);
   const forwardMotion = useRef(1);
   const forwardBoost = useRef(0);
   const wasStarted = useRef(started);
@@ -1130,6 +1180,11 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
   const collisionBasisU = useMemo(() => new THREE.Vector3(), []);
   const collisionBasisV = useMemo(() => new THREE.Vector3(), []);
   const collisionBoxCenter = useMemo(() => new THREE.Vector3(), []);
+  const collisionSlideNormal = useMemo(() => new THREE.Vector3(), []);
+  const cameraAnchor = useMemo(() => new THREE.Vector3(), []);
+  const cameraDesired = useMemo(() => new THREE.Vector3(), []);
+  const cameraResolved = useMemo(() => new THREE.Vector3(), []);
+  const cameraMotion = useMemo(() => new THREE.Vector3(), []);
   const caveCandidate = useMemo(() => new THREE.Vector2(), []);
   const visualLateral = useMemo(() => new THREE.Vector2(), []);
   const caveViewTilt = useRef(new THREE.Vector2());
@@ -1149,27 +1204,34 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
     else delete colliderObjects.current[id];
   }, []);
 
-  const motionIsBlocked = useCallback((origin: THREE.Vector3, motion: THREE.Vector3, excludedIds: ReadonlySet<string>, allowEscapeFromBounds = false) => {
+  const findCollision = useCallback((
+    origin: THREE.Vector3,
+    motion: THREE.Vector3,
+    excludedIds: ReadonlySet<string>,
+    radius = PLAYER_COLLISION_RADIUS,
+    allowEscapeFromBounds = false,
+  ): CollisionHit | null => {
     const motionLength = motion.length();
-    if (motionLength < 0.0001) return false;
+    if (motionLength < 0.0001) return null;
     collisionDirection.copy(motion).multiplyScalar(1 / motionLength);
     collisionBasisU.crossVectors(
       collisionDirection,
       Math.abs(collisionDirection.dot(collisionUp)) > 0.92 ? collisionSide : collisionUp,
     ).normalize();
     collisionBasisV.crossVectors(collisionDirection, collisionBasisU).normalize();
-    const playerRadius = 1.18;
-
-    for (let rayIndex = 0; rayIndex < 5; rayIndex += 1) {
+    let closestHit: CollisionHit | null = null;
+    for (let rayIndex = 0; rayIndex < 9; rayIndex += 1) {
       collisionOrigin.copy(origin);
+      let forwardExtent = radius;
       if (rayIndex > 0) {
-        const angle = (rayIndex - 1) * Math.PI / 2;
-        collisionOrigin.addScaledVector(collisionBasisU, Math.cos(angle) * playerRadius);
-        collisionOrigin.addScaledVector(collisionBasisV, Math.sin(angle) * playerRadius);
+        const angle = (rayIndex - 1) * Math.PI / 4;
+        collisionOrigin.addScaledVector(collisionBasisU, Math.cos(angle) * radius);
+        collisionOrigin.addScaledVector(collisionBasisV, Math.sin(angle) * radius);
+        forwardExtent = 0;
       }
       collisionRaycaster.set(collisionOrigin, collisionDirection);
-      collisionRaycaster.near = 0.025;
-      collisionRaycaster.far = motionLength + (rayIndex === 0 ? playerRadius : playerRadius * 0.32);
+      collisionRaycaster.near = 0.001;
+      collisionRaycaster.far = motionLength + forwardExtent + COLLISION_SKIN;
 
       for (const asset of SCENE_ASSETS) {
         if (excludedIds.has(asset.id)) continue;
@@ -1190,13 +1252,25 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
           const nextDistance = Math.hypot(nextX - collisionBoxCenter.x, nextY - collisionBoxCenter.y);
           if (nextDistance > currentDistance + 0.0001) continue;
         }
-        if (origin.x < bounds.min.x - playerRadius || origin.x > bounds.max.x + playerRadius) continue;
-        if (origin.y < bounds.min.y - playerRadius || origin.y > bounds.max.y + playerRadius) continue;
-        if (worldMaxZ < -motionLength - playerRadius || worldMinZ > playerRadius) continue;
-        if (collisionRaycaster.intersectObject(collider.object, true).length > 0) return true;
+        const nextX = origin.x + motion.x;
+        const nextY = origin.y + motion.y;
+        const nextZ = origin.z + motion.z;
+        if (Math.max(origin.x, nextX) + radius < bounds.min.x || Math.min(origin.x, nextX) - radius > bounds.max.x) continue;
+        if (Math.max(origin.y, nextY) + radius < bounds.min.y || Math.min(origin.y, nextY) - radius > bounds.max.y) continue;
+        if (Math.max(origin.z, nextZ) + radius < worldMinZ || Math.min(origin.z, nextZ) - radius > worldMaxZ) continue;
+
+        const intersection = collisionRaycaster.intersectObject(collider.object, true)[0];
+        if (!intersection) continue;
+        const travelDistance = Math.max(0, intersection.distance - forwardExtent);
+        if (travelDistance > motionLength + COLLISION_SKIN || (closestHit && travelDistance >= closestHit.distance)) continue;
+        const normal = intersection.face
+          ? intersection.face.normal.clone().applyNormalMatrix(new THREE.Matrix3().getNormalMatrix(intersection.object.matrixWorld)).normalize()
+          : collisionDirection.clone().negate();
+        if (normal.dot(collisionDirection) > 0) normal.negate();
+        closestHit = { distance: travelDistance, normal, assetId: asset.id };
       }
     }
-    return false;
+    return closestHit;
   }, [collisionBasisU, collisionBasisV, collisionBoxCenter, collisionDirection, collisionOrigin, collisionRaycaster, collisionSide, collisionUp]);
 
   const lockToCaveTrack = useCallback((point: THREE.Vector2, routeProgress: number) => {
@@ -1288,6 +1362,9 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
     caveRailActive.current = false;
     forwardMotion.current = 1;
     forwardBoost.current = 0;
+    cameraCollisionDistance.current = 12;
+    cameraCollisionTargetDistance.current = 12;
+    cameraCollisionHold.current = 0;
     onTelemetry({ progress: 0, lateral: [0, 0], stage: 0, artifactId: null, finished: false });
   }, [resetKey, onTelemetry]);
 
@@ -1296,7 +1373,8 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
     const isMobileViewport = state.size.width <= 720;
     const opticalCenterX = isMobileViewport ? 0 : -0.17;
     if (state.camera instanceof THREE.PerspectiveCamera) {
-      const targetFov = editing ? 32 : 58;
+      const collisionCompression = THREE.MathUtils.clamp((9 - cameraCollisionDistance.current) / 6.5, 0, 1);
+      const targetFov = editing ? 32 : 58 + collisionCompression * 3.2;
       const nextFov = THREE.MathUtils.damp(state.camera.fov, targetFov, 7.5, delta);
       if (Math.abs(nextFov - state.camera.fov) > 0.001) {
         state.camera.fov = nextFov;
@@ -1309,6 +1387,9 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
       velocity.current.set(0, 0);
       forwardMotion.current = 1;
       forwardBoost.current = 0;
+      cameraCollisionDistance.current = 12;
+      cameraCollisionTargetDistance.current = 12;
+      cameraCollisionHold.current = 0;
       if (world.current) world.current.position.z = 0;
       if (player.current) {
         player.current.position.x = opticalCenterX;
@@ -1356,24 +1437,59 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
       if (!caveLocked) {
         collisionOrigin.set(lateral.current.x, lateral.current.y, 0);
         collisionMotion.set(intendedX - lateral.current.x, intendedY - lateral.current.y, 0);
-        if (!motionIsBlocked(collisionOrigin, collisionMotion, CAVE_COLLISION_EXCLUSIONS, true)) {
-          lateral.current.set(intendedX, intendedY);
-        } else {
-          collisionMotion.set(intendedX - lateral.current.x, 0, 0);
-          if (!motionIsBlocked(collisionOrigin, collisionMotion, CAVE_COLLISION_EXCLUSIONS, true)) lateral.current.x = intendedX;
-          else velocity.current.x = 0;
-          collisionOrigin.x = lateral.current.x;
-          collisionMotion.set(0, intendedY - lateral.current.y, 0);
-          if (!motionIsBlocked(collisionOrigin, collisionMotion, CAVE_COLLISION_EXCLUSIONS, true)) lateral.current.y = intendedY;
-          else velocity.current.y = 0;
+        for (let slidePass = 0; slidePass < 3 && collisionMotion.lengthSq() > 0.000001; slidePass += 1) {
+          const hit = findCollision(collisionOrigin, collisionMotion, CAVE_COLLISION_EXCLUSIONS, PLAYER_COLLISION_RADIUS, true);
+          if (!hit) {
+            collisionOrigin.add(collisionMotion);
+            collisionMotion.set(0, 0, 0);
+            break;
+          }
+          const remainingLength = collisionMotion.length();
+          collisionDirection.copy(collisionMotion).multiplyScalar(1 / remainingLength);
+          const safeDistance = THREE.MathUtils.clamp(hit.distance - COLLISION_SKIN, 0, remainingLength);
+          collisionOrigin.addScaledVector(collisionDirection, safeDistance);
+          collisionSlideNormal.copy(hit.normal).setZ(0);
+          if (collisionSlideNormal.lengthSq() < 0.0001) break;
+          collisionSlideNormal.normalize();
+          collisionOrigin.addScaledVector(collisionSlideNormal, COLLISION_SKIN * 0.45);
+          collisionMotion.copy(collisionDirection).multiplyScalar(Math.max(0, remainingLength - safeDistance));
+          const intoSurface = collisionMotion.dot(collisionSlideNormal);
+          if (intoSurface < 0) collisionMotion.addScaledVector(collisionSlideNormal, -intoSurface);
+          const velocityIntoSurface = velocity.current.x * collisionSlideNormal.x + velocity.current.y * collisionSlideNormal.y;
+          if (velocityIntoSurface < 0) {
+            velocity.current.x -= collisionSlideNormal.x * velocityIntoSurface;
+            velocity.current.y -= collisionSlideNormal.y * velocityIntoSurface;
+          }
         }
+        lateral.current.set(
+          THREE.MathUtils.clamp(collisionOrigin.x, -horizontalLimit, horizontalLimit),
+          THREE.MathUtils.clamp(collisionOrigin.y, -verticalLimit, verticalLimit),
+        );
       }
 
       const forwardDistance = Math.min(ROUTE_LENGTH - progress.current, Math.max(0, speed * delta));
       if (forwardDistance > 0.002) {
         collisionOrigin.set(lateral.current.x, lateral.current.y, 0);
         collisionMotion.set(0, 0, -forwardDistance);
-        if (!motionIsBlocked(collisionOrigin, collisionMotion, FORWARD_COLLISION_EXCLUSIONS)) progress.current += forwardDistance;
+        const hit = findCollision(collisionOrigin, collisionMotion, FORWARD_COLLISION_EXCLUSIONS, PLAYER_COLLISION_RADIUS);
+        if (!hit) progress.current += forwardDistance;
+        else {
+          const safeDistance = THREE.MathUtils.clamp(hit.distance - COLLISION_SKIN, 0, forwardDistance);
+          progress.current += safeDistance;
+          collisionSlideNormal.copy(hit.normal).setZ(0);
+          if (collisionSlideNormal.lengthSq() < 0.015) {
+            const collider = colliderObjects.current[hit.assetId];
+            collider?.bounds.getCenter(collisionBoxCenter);
+            const preferredSide = collider
+              ? Math.sign(lateral.current.x - collisionBoxCenter.x || velocity.current.x || 1)
+              : Math.sign(velocity.current.x || 1);
+            collisionSlideNormal.set(preferredSide, 0, 0);
+          } else collisionSlideNormal.normalize();
+          const blockedDistance = Math.max(0, forwardDistance - safeDistance);
+          const separation = THREE.MathUtils.clamp(0.018 + blockedDistance * 0.75, 0.018, 0.11);
+          lateral.current.x = THREE.MathUtils.clamp(lateral.current.x + collisionSlideNormal.x * separation, -horizontalLimit, horizontalLimit);
+          lateral.current.y = THREE.MathUtils.clamp(lateral.current.y + collisionSlideNormal.y * separation, -verticalLimit, verticalLimit);
+        }
       }
     }
     caveCandidate.copy(lateral.current);
@@ -1384,7 +1500,10 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
       caveViewTilt.current.x = THREE.MathUtils.damp(caveViewTilt.current.x, 0, 3.8, delta);
       caveViewTilt.current.y = THREE.MathUtils.damp(caveViewTilt.current.y, 0, 3.8, delta);
     }
-    if (world.current) world.current.position.z = progress.current;
+    if (world.current) {
+      world.current.position.z = progress.current;
+      world.current.updateMatrixWorld(true);
+    }
     if (player.current) {
       visualLateral.set(
         THREE.MathUtils.damp(player.current.position.x - opticalCenterX, lateral.current.x, 9, delta),
@@ -1422,9 +1541,65 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
       const movementLead = isMobileViewport ? 0.018 : 0.026;
       const cameraLeadX = caveRailActive.current ? 0 : velocity.current.x * movementLead;
       const cameraLeadY = caveRailActive.current ? 0 : velocity.current.y * movementLead * 0.72;
-      state.camera.position.x = THREE.MathUtils.damp(state.camera.position.x, lateral.current.x + cameraLeadX, 4.2, delta);
-      state.camera.position.y = THREE.MathUtils.damp(state.camera.position.y, cameraBaseY + lateral.current.y + cameraLeadY, 4.2, delta);
-      state.camera.position.z = THREE.MathUtils.damp(state.camera.position.z, 11 + forwardBoost.current * 1.6, 3.8, delta);
+      cameraAnchor.set(lateral.current.x, lateral.current.y + 0.35, 0.2);
+      cameraDesired.set(
+        lateral.current.x + cameraLeadX,
+        cameraBaseY + lateral.current.y + cameraLeadY,
+        11 + forwardBoost.current * 1.6,
+      );
+      cameraMotion.copy(cameraDesired).sub(cameraAnchor);
+      const cameraMotionLength = cameraMotion.length();
+      const cameraHit = findCollision(
+        cameraAnchor,
+        cameraMotion,
+        caveRailActive.current ? CAMERA_CAVE_COLLISION_EXCLUSIONS : CAMERA_COLLISION_EXCLUSIONS,
+        CAMERA_COLLISION_RADIUS,
+      );
+      const rawPermittedCameraDistance = cameraHit
+        ? THREE.MathUtils.clamp(cameraHit.distance - COLLISION_SKIN, 0.12, cameraMotionLength)
+        : cameraMotionLength;
+      const permittedCameraDistance = cameraHit
+        ? Math.max(rawPermittedCameraDistance, cameraMotionLength - CAMERA_MAX_COMPRESSION)
+        : cameraMotionLength;
+      if (cameraHit) {
+        cameraCollisionTargetDistance.current = Math.min(cameraCollisionTargetDistance.current, permittedCameraDistance);
+        cameraCollisionHold.current = CAMERA_COLLISION_HOLD_SECONDS;
+      } else if (cameraCollisionHold.current > 0) {
+        cameraCollisionHold.current = Math.max(0, cameraCollisionHold.current - delta);
+      } else {
+        cameraCollisionTargetDistance.current = THREE.MathUtils.damp(
+          cameraCollisionTargetDistance.current,
+          permittedCameraDistance,
+          2.4,
+          delta,
+        );
+      }
+      cameraCollisionTargetDistance.current = THREE.MathUtils.clamp(
+        cameraCollisionTargetDistance.current,
+        0.12,
+        cameraMotionLength,
+      );
+      const previousCameraDistance = cameraCollisionDistance.current;
+      const distanceResponse = THREE.MathUtils.damp(
+        previousCameraDistance,
+        cameraCollisionTargetDistance.current,
+        cameraHit ? 6.2 : 3.2,
+        delta,
+      );
+      const maximumDistanceStep = (distanceResponse < previousCameraDistance
+        ? CAMERA_MAX_APPROACH_SPEED
+        : CAMERA_MAX_RELEASE_SPEED) * delta;
+      cameraCollisionDistance.current = THREE.MathUtils.clamp(
+        distanceResponse,
+        previousCameraDistance - maximumDistanceStep,
+        previousCameraDistance + maximumDistanceStep,
+      );
+      cameraResolved.copy(cameraAnchor);
+      if (cameraMotionLength > 0.0001) cameraResolved.addScaledVector(cameraMotion, cameraCollisionDistance.current / cameraMotionLength);
+      const cameraResponse = cameraHit ? 7.2 : 4.2;
+      state.camera.position.x = THREE.MathUtils.damp(state.camera.position.x, cameraResolved.x, cameraResponse, delta);
+      state.camera.position.y = THREE.MathUtils.damp(state.camera.position.y, cameraResolved.y, cameraResponse, delta);
+      state.camera.position.z = THREE.MathUtils.damp(state.camera.position.z, cameraResolved.z, cameraHit ? 6.4 : 3.8, delta);
       flightLookTarget.set(
         lateral.current.x + (caveRailActive.current ? caveViewTilt.current.x * 0.82 : velocity.current.x * movementLead * 1.75),
         lateral.current.y + (caveRailActive.current ? caveViewTilt.current.y * 0.58 : velocity.current.y * movementLead * 1.15),
@@ -1460,12 +1635,23 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
       const stage = current < STAGES[0].range[1] ? 0 : current < STAGES[1].range[1] ? 1 : 2;
       let nearest: SceneAsset | null = null;
       let nearestDistance = Infinity;
+      let nearestTriggerDistance = 42;
       SCENE_ASSETS.forEach((asset) => {
         if (!asset.voice.trim() || !asset.caption.trim()) return;
+        if (asset.id === "cave" && current < INITIAL_ARTIFACT_REVEAL_PROGRESS) return;
         const distance = Math.abs(-transforms[asset.id].position[2] - current);
-        if (distance < nearestDistance) { nearest = asset; nearestDistance = distance; }
+        if (distance < nearestDistance) {
+          const modelScale = Math.max(...transforms[asset.id].scale.map((value) => Math.abs(value)));
+          nearest = asset;
+          nearestDistance = distance;
+          nearestTriggerDistance = THREE.MathUtils.clamp(30 + asset.targetSize * modelScale * 0.38, 44, 78);
+        }
       });
-      onTelemetry({ progress: current, lateral: [lateral.current.x, lateral.current.y], stage, artifactId: nearestDistance < 42 ? (nearest as SceneAsset | null)?.id ?? null : null, finished: current >= ROUTE_LENGTH - 0.01 });
+      const initialCave = SCENE_ASSETS.find((asset) => asset.id === "cave");
+      const artifactId = current >= INITIAL_ARTIFACT_REVEAL_PROGRESS && current < 44 && initialCave?.voice.trim() && initialCave.caption.trim()
+        ? initialCave.id
+        : nearestDistance < nearestTriggerDistance ? (nearest as SceneAsset | null)?.id ?? null : null;
+      onTelemetry({ progress: current, lateral: [lateral.current.x, lateral.current.y], stage, artifactId, finished: current >= ROUTE_LENGTH - 0.01 });
       lastReport.current = state.clock.elapsedTime;
     }
   });
@@ -1511,7 +1697,7 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
   );
 }
 
-export function JinshaExperience() {
+function JinshaExperienceCore() {
   const experienceRef = useRef<HTMLElement>(null);
   const [entered, setEntered] = useState(false);
   const [entering, setEntering] = useState(false);
@@ -1531,7 +1717,7 @@ export function JinshaExperience() {
   const [audioPanelOpen, setAudioPanelOpen] = useState(false);
   const [completionAction, setCompletionAction] = useState<"replay" | "intro" | null>(null);
   const [audioMix, setAudioMix] = useState<AudioMix>(() => {
-    const defaults: AudioMix = { master: 0.72, background: 0.42, effects: 0.76 };
+    const defaults: AudioMix = { master: 1, background: 1, effects: 1 };
     if (typeof window === "undefined") return defaults;
     try {
       const saved = JSON.parse(window.localStorage.getItem(AUDIO_MIX_KEY) ?? "{}") as Partial<AudioMix>;
@@ -1576,9 +1762,12 @@ export function JinshaExperience() {
     muted: audio.muted,
     effectsVolume,
   });
-  const activeArtifact = SCENE_ASSETS.find((artifact) => artifact.id === telemetry.artifactId) ?? null;
+  const telemetryArtifact = SCENE_ASSETS.find((artifact) => artifact.id === telemetry.artifactId) ?? null;
+  const initialArtifact = SCENE_ASSETS.find((artifact) => artifact.id === "cave") ?? SCENE_ASSETS[0];
+  const activeArtifact = telemetryArtifact ?? (entered && telemetry.progress >= INITIAL_ARTIFACT_REVEAL_PROGRESS && telemetry.progress < 44 ? initialArtifact : null);
   const showFlightPrompt = entered && !entering && telemetry.progress < 12 && !activeArtifact && !paused && !editing;
   const stage = STAGES[telemetry.stage];
+  const renderQuality: Quality = telemetry.stage === 0 && !editing ? "eco" : quality;
   const progressPercent = Math.min(100, telemetry.progress / ROUTE_LENGTH * 100);
   const dialogueDistortion = telemetry.stage === 0
     ? 1
@@ -1586,12 +1775,14 @@ export function JinshaExperience() {
       ? 1 - THREE.MathUtils.smoothstep(telemetry.progress, STAGES[1].range[0], STAGES[1].range[1])
       : 0;
   const dialogueStyle = { "--dialogue-distortion": dialogueDistortion } as CSSProperties;
+  const renderedArtifact = activeArtifact ?? displayArtifact;
+  const artifactCaptionLines = renderedArtifact ? getArtifactCaptionLines(renderedArtifact.caption) : [];
 
   useEffect(() => {
     if (typeof window !== "undefined" && (window.innerWidth < 760 || navigator.hardwareConcurrency <= 4)) setQuality("eco");
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (activeArtifact) setDisplayArtifact(activeArtifact);
   }, [activeArtifact]);
 
@@ -1837,24 +2028,33 @@ export function JinshaExperience() {
     gsap.to(prompt, { autoAlpha: 0, y: reduceMotion ? 0 : -14, duration: reduceMotion ? 0.01 : 0.42, ease: "power2.inOut", overwrite: "auto" });
   }, { scope: experienceRef, dependencies: [entered, showFlightPrompt] });
 
-  useGSAP(() => {
+  useGSAP((_, contextSafe) => {
     const card = experienceRef.current?.querySelector(".artifact-card");
+    const dialogue = experienceRef.current?.querySelector(".protagonist-dialogue");
     if (!card) return;
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    gsap.killTweensOf([card, ...card.querySelectorAll("*")]);
-    if (!activeArtifact) {
-      if (!displayArtifact) {
-        gsap.set(card, { autoAlpha: 0 });
-        return;
-      }
-      const exitTimeline = gsap.timeline({ defaults: { ease: "power2.inOut" } });
-      exitTimeline
-        .to([".artifact-card h3", ".artifact-context", ".artifact-meta", ".protagonist-dialogue"], { autoAlpha: 0, y: reduceMotion ? 0 : -7, duration: reduceMotion ? 0.01 : 0.28, stagger: 0.035 }, 0)
-        .to(".artifact-signal i", { autoAlpha: 0, scaleY: 0.25, duration: reduceMotion ? 0.01 : 0.24, stagger: 0.03, transformOrigin: "center bottom" }, 0.04)
-        .to([card, ".protagonist-dialogue"], { autoAlpha: 0, y: reduceMotion ? 0 : -12, scale: reduceMotion ? 1 : 0.985, duration: reduceMotion ? 0.01 : 0.36 }, 0.12);
+    gsap.killTweensOf([card, ...card.querySelectorAll("*"), dialogue]);
+    if (!entered || entering) {
+      gsap.set([card, dialogue], { autoAlpha: 0 });
       return;
     }
-    if (!displayArtifact || displayArtifact.id !== activeArtifact.id) return;
+    if (!activeArtifact) {
+      if (!renderedArtifact) {
+        gsap.set([card, dialogue], { autoAlpha: 0 });
+        return;
+      }
+      const clearDepartedArtifact = contextSafe(() => setDisplayArtifact(null));
+      gsap.set([card, dialogue], { autoAlpha: 1 });
+      const exitTimeline = gsap.timeline({ defaults: { ease: "power2.inOut" }, onComplete: clearDepartedArtifact });
+      exitTimeline
+        .addLabel("depart", 0)
+        .to(dialogue, { autoAlpha: 0, y: reduceMotion ? 0 : -15, letterSpacing: reduceMotion ? undefined : "0.17em", duration: reduceMotion ? 0.01 : 0.72, ease: "power2.inOut" }, "depart")
+        .to([".artifact-card h3", ".artifact-context", ".artifact-meta"], { autoAlpha: 0, y: reduceMotion ? 0 : -7, duration: reduceMotion ? 0.01 : 0.36, stagger: 0.045 }, "depart+=0.08")
+        .to(".artifact-signal i", { autoAlpha: 0, scaleY: 0.25, duration: reduceMotion ? 0.01 : 0.24, stagger: 0.03, transformOrigin: "center bottom" }, 0.04)
+        .to(card, { autoAlpha: 0, y: reduceMotion ? 0 : -12, scale: reduceMotion ? 1 : 0.985, duration: reduceMotion ? 0.01 : 0.44 }, "depart+=0.18");
+      return;
+    }
+    if (!renderedArtifact || renderedArtifact.id !== activeArtifact.id) return;
     const duration = reduceMotion ? 0.01 : 0.62;
     const timeline = gsap.timeline({ defaults: { duration, ease: "power3.out" } });
     timeline
@@ -1863,7 +2063,7 @@ export function JinshaExperience() {
       .fromTo([".artifact-card h3", ".artifact-context"], { autoAlpha: 0, y: 12 }, { autoAlpha: 1, y: 0, stagger: 0.12 }, 0.2)
       .fromTo(".protagonist-dialogue", { autoAlpha: 0, y: 16 }, { autoAlpha: 1, y: 0, duration: reduceMotion ? 0.01 : 0.86 }, 0.42)
       .fromTo(".artifact-meta", { autoAlpha: 0, y: 8 }, { autoAlpha: 1, y: 0 }, 0.74);
-  }, { scope: experienceRef, dependencies: [activeArtifact?.id, displayArtifact?.id] });
+  }, { scope: experienceRef, dependencies: [entered, entering, activeArtifact?.id, renderedArtifact?.id] });
 
   useGSAP((_, contextSafe) => {
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -1923,15 +2123,15 @@ export function JinshaExperience() {
   }, { scope: experienceRef, dependencies: [paused, pauseClosing, telemetry.finished, completionAction], revertOnUpdate: true });
 
   return (
-    <main ref={experienceRef} className={`experience ${entered ? "is-running" : "is-intro"} ${entering ? "is-entering" : ""} ${editing ? "is-editing" : ""} ${boosting && cruising && entered && !paused && !editing ? "is-boosting" : ""} ${!cruising && entered ? "is-stopped" : ""}`}>
+    <main ref={experienceRef} className={`experience stage-${telemetry.stage + 1} ${entered ? "is-running" : "is-intro"} ${entering ? "is-entering" : ""} ${editing ? "is-editing" : ""} ${boosting && cruising && entered && !paused && !editing ? "is-boosting" : ""} ${!cruising && entered ? "is-stopped" : ""}`}>
       <div className="scene" aria-label="羽见千年三维体验场景">
-        <Canvas camera={{ position: [0, 2.6, 11], fov: 58, near: 0.02, far: 520 }} dpr={quality === "high" ? [1, 1.65] : [0.75, 1.1]} gl={{ antialias: quality === "high", powerPreference: quality === "high" ? "high-performance" : "low-power" }}>
+        <Canvas camera={{ position: [0, 2.6, 11], fov: 58, near: 0.02, far: 520 }} dpr={renderQuality === "high" ? [1, 1.65] : [0.75, 1.1]} gl={{ antialias: quality === "high", powerPreference: quality === "high" ? "high-performance" : "low-power" }}>
           <FlightScene
             started={entered}
             entering={entering}
             paused={paused || telemetry.finished || editing}
             cruising={cruising}
-            quality={quality}
+            quality={renderQuality}
             controls={controls}
             resetKey={resetKey}
             transforms={sceneTransforms}
@@ -1945,6 +2145,11 @@ export function JinshaExperience() {
             onTelemetry={reportTelemetry}
           />
         </Canvas>
+      </div>
+
+      <div className="stage-effects" aria-hidden="true">
+        <div className="stage-effect stage-effect--signal"><i /><i /><i /></div>
+        <div className="stage-effect stage-effect--jade"><i /><i /></div>
       </div>
 
       {entered && !editing && <div
@@ -2011,20 +2216,20 @@ export function JinshaExperience() {
         </div>
         <p className="flight-prompt" aria-hidden={!showFlightPrompt}>让曦羽保持前行<br /><span className="desktop-flight-instruction">A / D 横移 · W / S 升降 · Shift 疾飞 · Space 停下</span><span className="mobile-flight-instruction">在画面上拖动 · 控制飞行方向</span></p>
         <aside className={`artifact-card ${activeArtifact ? "is-visible" : ""}`} aria-live="polite">
-          {displayArtifact && <div className="artifact-voice" key={displayArtifact.id}>
+          {renderedArtifact && <div className="artifact-voice" key={renderedArtifact.id}>
             <div className="artifact-signal" aria-hidden="true"><i /><i /><i /><i /></div>
-            <h3>{displayArtifact.name}</h3>
-            <p className="artifact-context" style={getArtifactContextStyle(displayArtifact.caption)}>{displayArtifact.caption}</p>
-            <div className="artifact-meta"><span>记忆节点 {String(SCENE_ASSETS.indexOf(displayArtifact) + 1).padStart(2, "0")} / {String(SCENE_ASSETS.length).padStart(2, "0")}</span><i /><span>{STAGES[displayArtifact.stage].name}</span></div>
+            <h3>{renderedArtifact.name}</h3>
+            <p className="artifact-context" style={getArtifactContextStyle(artifactCaptionLines)}>{artifactCaptionLines.map((line, index) => <span className="artifact-context-line" key={`${renderedArtifact.id}-${index}`}>{line}</span>)}</p>
+            <div className="artifact-meta"><span>记忆节点 {String(SCENE_ASSETS.indexOf(renderedArtifact) + 1).padStart(2, "0")} / {String(SCENE_ASSETS.length).padStart(2, "0")}</span><i /><span>{STAGES[renderedArtifact.stage].name}</span></div>
           </div>}
         </aside>
-        {displayArtifact && <blockquote
-          className={`protagonist-dialogue ${activeArtifact ? "is-visible" : ""}`}
-          data-text={`“${displayArtifact.voice}”`}
+        {renderedArtifact && <blockquote
+          className={`protagonist-dialogue dialogue-stage-${renderedArtifact.stage + 1} ${activeArtifact ? "is-visible" : ""}`}
+          data-text={`“${renderedArtifact.voice}”`}
           style={dialogueStyle}
-          aria-label={`曦羽：“${displayArtifact.voice}”`}
+          aria-label={`曦羽：“${renderedArtifact.voice}”`}
           aria-live="polite"
-        ><span>曦羽</span>“{displayArtifact.voice}”</blockquote>}
+        ><span>曦羽</span><em className="dialogue-line">“{renderedArtifact.voice}”</em></blockquote>}
         <footer className="flight-dock">
           <div className="control-legend"><span><kbd>A</kbd><kbd>D</kbd> 左右</span><span><kbd>W</kbd><kbd>S</kbd> 升降</span><span><kbd className="wide-key">Shift</kbd> 疾飞</span><span><kbd className="wide-key">Space</kbd> {cruising ? "停下" : "前进"}</span></div>
           <div className="journey-progress">
@@ -2067,4 +2272,64 @@ export function JinshaExperience() {
       <noscript><div className="no-webgl">请启用 JavaScript 以进入三维体验。</div></noscript>
     </main>
   );
+}
+
+function CriticalLoadingScreen({ progress, leaving }: { progress: number; leaving: boolean }) {
+  return <main className={`critical-loading ${leaving ? "is-leaving" : ""}`} role="status" aria-live="polite" aria-label={`核心场景载入中，${progress}%`}>
+    <div className="critical-loading-depth" aria-hidden="true"><i /><i /><i /></div>
+    <section className="critical-loading-content">
+      <div className="critical-loading-seal" aria-hidden="true"><i /><span>羽</span></div>
+      <p>JINSHA IMMERSIVE ARCHIVE</p>
+      <h1>正在唤醒金沙记忆</h1>
+      <div className="critical-loading-route" aria-hidden="true">
+        {CRITICAL_MODEL_URLS.map((url, index) => <i key={url} className={progress >= (index + 1) / CRITICAL_MODEL_URLS.length * 100 ? "is-loaded" : ""} />)}
+      </div>
+      <strong>{String(progress).padStart(2, "0")}<small>%</small></strong>
+      <span>沉浸场景准备中</span>
+    </section>
+  </main>;
+}
+
+export function JinshaExperience() {
+  const [criticalProgress, setCriticalProgress] = useState(0);
+  const [criticalLeaving, setCriticalLeaving] = useState(false);
+  const [criticalReady, setCriticalReady] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    let completed = 0;
+    let readyTimer = 0;
+    let exitTimer = 0;
+    const startedAt = performance.now();
+    THREE.Cache.enabled = true;
+
+    const loads = CRITICAL_MODEL_URLS.map(async (url) => {
+      const loader = new GLTFLoader().setDRACOLoader(dracoLoader);
+      try {
+        const gltf = await loader.loadAsync(url);
+        disposeModel(gltf.scene);
+      } finally {
+        completed += 1;
+        if (active) setCriticalProgress(Math.round(completed / CRITICAL_MODEL_URLS.length * 100));
+      }
+    });
+
+    void Promise.allSettled(loads).then(() => {
+      const remaining = Math.max(0, 900 - (performance.now() - startedAt));
+      readyTimer = window.setTimeout(() => {
+        if (!active) return;
+        setCriticalProgress(100);
+        setCriticalLeaving(true);
+        exitTimer = window.setTimeout(() => { if (active) setCriticalReady(true); }, 720);
+      }, remaining);
+    });
+
+    return () => {
+      active = false;
+      window.clearTimeout(readyTimer);
+      window.clearTimeout(exitTimer);
+    };
+  }, []);
+
+  return criticalReady ? <JinshaExperienceCore /> : <CriticalLoadingScreen progress={criticalProgress} leaving={criticalLeaving} />;
 }
