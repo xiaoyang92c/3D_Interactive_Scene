@@ -53,7 +53,9 @@ button { font: inherit; }
 }
 
 .critical-loading {
-  position: relative;
+  position: fixed;
+  z-index: 100;
+  inset: 0;
   display: grid;
   width: 100vw;
   height: 100svh;
@@ -103,9 +105,9 @@ button { font: inherit; }
 .critical-loading-content > strong { color: rgba(225, 196, 127, 0.86); font: 300 24px/1 "IBM Plex Mono", Consolas, monospace; letter-spacing: 0.08em; }
 .critical-loading-content > strong small { margin-left: 3px; font-size: 9px; }
 .critical-loading-content > span { margin-top: 12px; color: rgba(232, 223, 196, 0.34); font: 9px/1.5 "Noto Serif SC", STSong, serif; letter-spacing: 0.16em; }
-.critical-loading.is-leaving { pointer-events: none; animation: critical-screen-out 720ms cubic-bezier(0.55, 0, 0.72, 0.22) both; }
-.critical-loading.is-leaving .critical-loading-depth { animation: critical-depth-out 680ms cubic-bezier(0.55, 0, 0.72, 0.22) both; }
-.critical-loading.is-leaving .critical-loading-content > * { animation: critical-element-out 430ms ease-in both; }
+.critical-loading.is-leaving { pointer-events: none; animation: critical-screen-out 420ms cubic-bezier(0.55, 0, 0.72, 0.22) both; }
+.critical-loading.is-leaving .critical-loading-depth { animation: critical-depth-out 390ms cubic-bezier(0.55, 0, 0.72, 0.22) both; }
+.critical-loading.is-leaving .critical-loading-content > * { animation: critical-element-out 280ms ease-in both; }
 .critical-loading.is-leaving .critical-loading-content > :nth-child(6) { animation-delay: 0ms; }
 .critical-loading.is-leaving .critical-loading-content > :nth-child(5) { animation-delay: 35ms; }
 .critical-loading.is-leaving .critical-loading-content > :nth-child(4) { animation-delay: 70ms; }
@@ -129,6 +131,61 @@ button { font: inherit; }
 
 .scene { position: absolute; inset: 0; }
 .scene canvas { filter: saturate(1.04) contrast(1.08) brightness(1.015); }
+.journey-transition {
+  position: absolute;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  visibility: hidden;
+  overflow: hidden;
+  place-items: center;
+  pointer-events: none;
+  opacity: 0;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(93, 58, 18, 0.3), rgba(5, 7, 6, 0.9) 36%, #020403 76%),
+    #020403;
+  will-change: opacity;
+}
+.journey-transition::before,
+.journey-transition::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+}
+.journey-transition::before {
+  inset: 0;
+  opacity: 0.42;
+  background: repeating-radial-gradient(circle at 50% 50%, transparent 0 8.6%, rgba(219, 173, 78, 0.11) 8.75% 8.9%, transparent 9.05% 16%);
+  mask-image: radial-gradient(circle, #000 0 42%, transparent 74%);
+}
+.journey-transition::after {
+  top: 50%;
+  left: 50%;
+  width: min(92vmax, 1480px);
+  aspect-ratio: 1;
+  translate: -50% -50%;
+  border: 1px solid rgba(229, 185, 91, 0.12);
+  border-radius: 50%;
+  box-shadow: 0 0 90px rgba(216, 169, 74, 0.08), inset 0 0 90px rgba(216, 169, 74, 0.045);
+}
+.journey-transition__halo {
+  position: absolute;
+  width: min(54vmin, 560px);
+  aspect-ratio: 1;
+  border: 1px solid rgba(245, 207, 119, 0.58);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 222, 143, 0.28) 0 1%, rgba(216, 169, 74, 0.1) 10%, transparent 61%);
+  box-shadow: 0 0 46px rgba(235, 185, 79, 0.32), 0 0 160px rgba(216, 169, 74, 0.13), inset 0 0 70px rgba(237, 195, 104, 0.1);
+  will-change: transform, opacity;
+}
+.journey-transition__line {
+  position: absolute;
+  width: min(72vw, 960px);
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(228, 183, 86, 0.38) 22%, #f1cd7b 50%, rgba(228, 183, 86, 0.38) 78%, transparent);
+  box-shadow: 0 0 10px rgba(238, 190, 90, 0.58), 0 0 34px rgba(216, 169, 74, 0.22);
+  will-change: transform, opacity;
+}
 .scene::after {
   content: "";
   position: absolute;
@@ -247,6 +304,36 @@ button { font: inherit; }
 .is-running.stage-2 .stage-effect--signal { opacity: 0.3; }
 .is-running.stage-3 .stage-effect--jade { opacity: 0.9; }
 .is-editing .stage-effects { opacity: 0; }
+
+.experience.quality-eco::before { opacity: 0.08; animation: none; }
+.quality-eco .stage-effect--signal,
+.quality-eco .stage-effect--signal::before,
+.quality-eco .stage-effect--signal::after,
+.quality-eco .stage-effect--signal i,
+.quality-eco .stage-effect--jade::before,
+.quality-eco .stage-effect--jade::after,
+.quality-eco .stage-effect--jade i,
+.quality-eco .artifact-voice::before,
+.quality-eco .dialogue-stage-3 .dialogue-line,
+.quality-eco .dialogue-stage-3::before,
+.quality-eco .dialogue-stage-3::after { animation: none; }
+.quality-eco .stage-effect--signal::before,
+.quality-eco .stage-effect--signal::after,
+.quality-eco .stage-effect--signal i { opacity: 0; }
+.quality-eco .artifact-voice { backdrop-filter: none; }
+.quality-eco .dialogue-stage-3 .dialogue-line { filter: none; }
+.quality-eco .completion-card::after,
+.quality-eco .completion-beam::before,
+.quality-eco .completion-rings > i,
+.quality-eco .completion-orbit-glints,
+.quality-eco .completion-seal,
+.quality-eco .completion-seal::before,
+.quality-eco .completion-seal::after,
+.quality-eco .completion-seal span,
+.quality-eco .completion-floor,
+.quality-eco .completion-floor::after,
+.quality-eco .completion-stages li > i,
+.quality-eco .completion-button--primary { animation: none; }
 
 .is-boosting .scene::after { opacity: 0.72; }
 .is-editing .scene::after { opacity: 0.28; }
@@ -871,11 +958,13 @@ button { font: inherit; }
 
 .completion-floor {
   position: absolute;
-  bottom: 2%;
-  left: 50%;
+  right: 0;
+  bottom: -10%;
+  left: 0;
   width: min(72vw, 1050px);
   aspect-ratio: 2.65;
-  translate: -50% 0;
+  margin-inline: auto;
+  translate: none;
   border-radius: 50%;
   background:
     repeating-radial-gradient(circle, transparent 0 8%, rgba(216, 169, 74, 0.18) 8.2% 8.45%, transparent 8.7% 15%),
@@ -883,7 +972,7 @@ button { font: inherit; }
   filter: drop-shadow(0 0 18px rgba(216, 169, 74, 0.18));
   opacity: 0.48;
   transform: perspective(620px) rotateX(64deg);
-  transform-origin: center top;
+  transform-origin: center center;
   animation: completion-floor-flow 18s linear infinite;
 }
 .completion-floor::after { content: ""; position: absolute; top: 50%; left: 50%; width: 8px; height: 8px; translate: -50% -50%; border-radius: 50%; background: #ffde8a; box-shadow: 0 0 12px 4px #e7a93e, 0 0 70px 20px rgba(216, 169, 74, 0.46); animation: completion-floor-core 3.4s ease-in-out infinite; }
@@ -1072,6 +1161,10 @@ button { font: inherit; }
 }
 
 @media (max-width: 720px) {
+  .critical-loading-depth i,
+  .critical-loading-seal i,
+  .critical-loading-seal span { animation: none; }
+  .critical-loading::before { opacity: 0.42; }
   :root {
     --edge-x: max(18px, env(safe-area-inset-left));
     --edge-y: max(18px, env(safe-area-inset-top));
@@ -1160,7 +1253,7 @@ button { font: inherit; }
   .completion-stages span { font-size: 9px; letter-spacing: 0.08em; }
   .completion-actions { width: min(330px, 92%); grid-template-columns: 1fr; gap: 9px; margin-top: 20px; }
   .completion-button { min-height: 49px; font-size: 12px; }
-  .completion-floor { bottom: 1%; width: 90vw; aspect-ratio: 2.2; opacity: 0.34; }
+  .completion-floor { right: 0; bottom: -5%; left: 0; width: 90vw; aspect-ratio: 2.2; margin-inline: auto; opacity: 0.34; }
   .is-running.stage-1 .stage-effect--signal { opacity: 0.5; }
   .is-running.stage-2 .stage-effect--signal { opacity: 0.22; }
   .is-running.stage-3 .stage-effect--jade { opacity: 0.66; }

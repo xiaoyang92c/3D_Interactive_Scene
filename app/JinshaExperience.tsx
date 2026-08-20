@@ -24,13 +24,12 @@ type Telemetry = { progress: number; lateral: [number, number]; stage: number; a
 const ATMOSPHERE_COLORS = ["#061313", "#160d06", "#0c0717"] as const;
 const FOG_COLORS = ["#0a1d1c", "#241408", "#170d25"] as const;
 
-const SCENE_TRANSFORMS_KEY = "jinsha-scene-transforms-v1";
+const SCENE_TRANSFORMS_KEY = "jinsha-scene-transforms-v2";
 const AUDIO_MIX_KEY = "jinsha-audio-mix-v2";
-const CRITICAL_MODEL_URLS = ["/models/xiyu.glb", ...SCENE_ASSETS.slice(0, 4).map((asset) => asset.url)] as const;
+const OPTIMIZED_MODEL_IDS = new Set(["cave", "ancient-tree", "landscape-birds", "bronze-pattern", "mask-fragment", "bronze-fragment", "sunbird-fragment", "civilization-gate"]);
 const CAVE_COLLISION_EXCLUSIONS = new Set(["cave"]);
 const FORWARD_COLLISION_EXCLUSIONS = new Set(["cave", "civilization-gate"]);
 const CAMERA_COLLISION_EXCLUSIONS = new Set<string>();
-const CAMERA_CAVE_COLLISION_EXCLUSIONS = new Set(["cave"]);
 const PLAYER_COLLISION_RADIUS = 0.82;
 const CAMERA_COLLISION_RADIUS = 0.5;
 const COLLISION_SKIN = 0.07;
@@ -39,6 +38,7 @@ const CAMERA_MAX_APPROACH_SPEED = 4.2;
 const CAMERA_MAX_RELEASE_SPEED = 2.6;
 const CAMERA_MAX_COMPRESSION = 1.35;
 const INITIAL_ARTIFACT_REVEAL_PROGRESS = 24;
+const CAVE_TRACK_OFFSET: [number, number] = [-0.65, -0.5];
 const SCENE_MOTIONS: Record<string, SceneMotion> = {
   cave: "static",
   "ancient-tree": "float",
@@ -91,6 +91,24 @@ const PREVIOUS_DEFAULT_POSITIONS: Record<string, Vector3Tuple> = {
   "civilization-gate": [0, 0, -362],
 };
 const dracoLoader = new DRACOLoader().setDecoderPath("/draco/");
+const ATMOSPHERE_COLOR_VALUES = ATMOSPHERE_COLORS.map((color) => new THREE.Color(color));
+const FOG_COLOR_VALUES = FOG_COLORS.map((color) => new THREE.Color(color));
+
+function getRecommendedQuality(): Quality {
+  if (typeof window === "undefined") return "high";
+  const navigatorWithMemory = navigator as Navigator & { deviceMemory?: number };
+  const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
+  const constrainedMemory = (navigatorWithMemory.deviceMemory ?? 8) <= 4;
+  const constrainedCpu = (navigator.hardwareConcurrency ?? 8) <= 4;
+  const mobileViewport = window.innerWidth <= 900 || (coarsePointer && window.innerWidth <= 1180);
+  return mobileViewport || constrainedMemory || constrainedCpu ? "eco" : "high";
+}
+
+function getSceneModelUrl(asset: SceneAsset, quality: Quality): string {
+  if (!OPTIMIZED_MODEL_IDS.has(asset.id)) return asset.url;
+  const directory = quality === "eco" ? "/models/jinsha-eco/" : "/models/jinsha-optimized/";
+  return asset.url.replace("/models/jinsha/", directory);
+}
 const SPATIAL_SOUND_SOURCES = [
   { assetId: "landscape-birds", url: "/audio/stage-water.mp3", volume: 0.7, near: 18, far: 220 },
   { assetId: "stage-three-gate", url: "/audio/stage-bell.mp3", volume: 0.76, near: 20, far: 230 },
@@ -147,7 +165,7 @@ function useBoostSound(active: boolean, muted: boolean, effectsVolume: number) {
   useEffect(() => {
     const track = new Audio("/audio/boost-wind.mp3");
     track.loop = true;
-    track.preload = "auto";
+    track.preload = "none";
     track.volume = 0;
     player.current = track;
     return () => {
@@ -313,10 +331,17 @@ function createGlowTexture(size = 32) {
   return texture;
 }
 
+function particleUnit(index: number, salt: number) {
+  const value = Math.sin(index * 73.137 + salt * 41.917) * 43758.5453;
+  return value - Math.floor(value);
+}
+
 function StarField({ quality }: { quality: Quality }) {
   const farPoints = useRef<THREE.Points>(null);
   const brightPoints = useRef<THREE.Points>(null);
+  const softPoints = useRef<THREE.Points>(null);
   const brightMaterial = useRef<THREE.PointsMaterial>(null);
+  const softMaterial = useRef<THREE.PointsMaterial>(null);
   const glowTexture = useMemo(() => createGlowTexture(32), []);
   const layers = useMemo(() => {
     const random = (index: number, salt: number) => {
@@ -343,6 +368,7 @@ function StarField({ quality }: { quality: Quality }) {
     return {
       far: createLayer(quality === "high" ? 1500 : 650, 138, 78),
       bright: createLayer(quality === "high" ? 280 : 120, 82, 46),
+      soft: createLayer(quality === "high" ? 72 : 32, 106, 58),
     };
   }, [quality]);
 
@@ -350,19 +376,59 @@ function StarField({ quality }: { quality: Quality }) {
   useFrame(({ clock }) => {
     if (farPoints.current) farPoints.current.rotation.z = Math.sin(clock.elapsedTime * 0.018) * 0.012;
     if (brightPoints.current) brightPoints.current.rotation.z = -Math.sin(clock.elapsedTime * 0.023) * 0.017;
+    if (softPoints.current) softPoints.current.rotation.z = Math.sin(clock.elapsedTime * 0.011) * 0.022;
     if (brightMaterial.current) brightMaterial.current.opacity = 0.68 + Math.sin(clock.elapsedTime * 0.82) * 0.13;
+    if (softMaterial.current) softMaterial.current.opacity = 0.15 + Math.sin(clock.elapsedTime * 0.31) * 0.045;
   });
 
   return <group>
     <points ref={farPoints} frustumCulled={false}>
       <bufferGeometry><bufferAttribute attach="attributes-position" args={[layers.far.positions, 3]} /><bufferAttribute attach="attributes-color" args={[layers.far.colors, 3]} /></bufferGeometry>
-      <pointsMaterial map={glowTexture} alphaTest={0.01} vertexColors size={quality === "high" ? 0.34 : 0.28} transparent opacity={0.6} sizeAttenuation depthWrite={false} fog={false} blending={THREE.AdditiveBlending} />
+      <pointsMaterial map={glowTexture} alphaTest={0.01} vertexColors size={quality === "high" ? 0.34 : 0.28} transparent opacity={0.6} sizeAttenuation depthWrite={false} fog blending={THREE.AdditiveBlending} />
     </points>
     <points ref={brightPoints} frustumCulled={false}>
       <bufferGeometry><bufferAttribute attach="attributes-position" args={[layers.bright.positions, 3]} /><bufferAttribute attach="attributes-color" args={[layers.bright.colors, 3]} /></bufferGeometry>
-      <pointsMaterial ref={brightMaterial} map={glowTexture} alphaTest={0.008} vertexColors size={quality === "high" ? 0.62 : 0.5} transparent opacity={0.72} sizeAttenuation depthWrite={false} fog={false} blending={THREE.AdditiveBlending} />
+      <pointsMaterial ref={brightMaterial} map={glowTexture} alphaTest={0.008} vertexColors size={quality === "high" ? 0.62 : 0.5} transparent opacity={0.72} sizeAttenuation depthWrite={false} fog blending={THREE.AdditiveBlending} />
+    </points>
+    <points ref={softPoints} frustumCulled={false}>
+      <bufferGeometry><bufferAttribute attach="attributes-position" args={[layers.soft.positions, 3]} /><bufferAttribute attach="attributes-color" args={[layers.soft.colors, 3]} /></bufferGeometry>
+      <pointsMaterial ref={softMaterial} map={glowTexture} alphaTest={0.002} vertexColors size={quality === "high" ? 1.7 : 1.3} transparent opacity={0.15} sizeAttenuation depthWrite={false} fog blending={THREE.AdditiveBlending} />
     </points>
   </group>;
+}
+
+function DepthCorridor({ quality }: { quality: Quality }) {
+  const rings = useRef<THREE.InstancedMesh>(null);
+  const count = quality === "high" ? 20 : 12;
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+
+  useLayoutEffect(() => {
+    if (!rings.current) return;
+    const spacing = ROUTE_LENGTH / (count + 1);
+    for (let index = 0; index < count; index += 1) {
+      const distance = 34 + index * spacing;
+      const radius = 13.8 + (index % 4) * 1.15;
+      dummy.position.set(Math.sin(index * 1.73) * 1.35, Math.cos(index * 1.29) * 0.72, -distance);
+      dummy.rotation.set(0, 0, index * 0.41);
+      dummy.scale.setScalar(radius);
+      dummy.updateMatrix();
+      rings.current.setMatrixAt(index, dummy.matrix);
+      const stageIndex = distance < STAGES[0].range[1] ? 0 : distance < STAGES[1].range[1] ? 1 : 2;
+      rings.current.setColorAt(index, new THREE.Color(STAGES[stageIndex].color).lerp(new THREE.Color("#d8bd82"), 0.28));
+    }
+    rings.current.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+    rings.current.instanceMatrix.needsUpdate = true;
+    if (rings.current.instanceColor) rings.current.instanceColor.needsUpdate = true;
+  }, [count, dummy]);
+
+  useFrame(({ clock }) => {
+    if (rings.current) rings.current.rotation.z = Math.sin(clock.elapsedTime * 0.055) * 0.014;
+  });
+
+  return <instancedMesh ref={rings} args={[undefined, undefined, count]} frustumCulled={false}>
+    <torusGeometry args={[1, 0.009, 4, quality === "high" ? 64 : 36]} />
+    <meshBasicMaterial vertexColors transparent opacity={quality === "high" ? 0.13 : 0.09} depthWrite={false} fog blending={THREE.AdditiveBlending} />
+  </instancedMesh>;
 }
 
 function ArtifactFrame({ asset, transform, index, frameSize }: { asset: SceneAsset; transform: SceneTransform; index: number; frameSize: number }) {
@@ -375,10 +441,10 @@ function ArtifactFrame({ asset, transform, index, frameSize }: { asset: SceneAss
     frame.current.rotation.z = clock.elapsedTime * 0.012 + phaseOffset;
   });
   return <group ref={frame} position={transform.position}>
-    <mesh position={[-frameSize / 2, 0, 0]}><boxGeometry args={[thickness, frameSize, thickness]} /><meshBasicMaterial color={color} transparent opacity={0.16} depthWrite={false} fog={false} /></mesh>
-    <mesh position={[frameSize / 2, 0, 0]}><boxGeometry args={[thickness, frameSize, thickness]} /><meshBasicMaterial color={color} transparent opacity={0.16} depthWrite={false} fog={false} /></mesh>
-    <mesh position={[0, frameSize / 2, 0]}><boxGeometry args={[frameSize, thickness, thickness]} /><meshBasicMaterial color={color} transparent opacity={0.16} depthWrite={false} fog={false} /></mesh>
-    <mesh position={[0, -frameSize / 2, 0]}><boxGeometry args={[frameSize, thickness, thickness]} /><meshBasicMaterial color={color} transparent opacity={0.13} depthWrite={false} fog={false} /></mesh>
+    <mesh position={[-frameSize / 2, 0, 0]}><boxGeometry args={[thickness, frameSize, thickness]} /><meshBasicMaterial color={color} transparent opacity={0.16} depthWrite={false} fog /></mesh>
+    <mesh position={[frameSize / 2, 0, 0]}><boxGeometry args={[thickness, frameSize, thickness]} /><meshBasicMaterial color={color} transparent opacity={0.16} depthWrite={false} fog /></mesh>
+    <mesh position={[0, frameSize / 2, 0]}><boxGeometry args={[frameSize, thickness, thickness]} /><meshBasicMaterial color={color} transparent opacity={0.16} depthWrite={false} fog /></mesh>
+    <mesh position={[0, -frameSize / 2, 0]}><boxGeometry args={[frameSize, thickness, thickness]} /><meshBasicMaterial color={color} transparent opacity={0.13} depthWrite={false} fog /></mesh>
   </group>;
 }
 
@@ -533,6 +599,200 @@ function FireflyTrail({ playerRef, quality, active }: { playerRef: RefObject<THR
   </points>;
 }
 
+function getParticleExtent(asset: SceneAsset, transform: SceneTransform) {
+  const averageScale = transform.scale.reduce((sum, value) => sum + Math.abs(value), 0) / 3;
+  return asset.targetSize * Math.max(averageScale, 0.01);
+}
+
+function ArtifactFireflies({ asset, transform, quality }: { asset: SceneAsset; transform: SceneTransform; quality: Quality }) {
+  const points = useRef<THREE.Points>(null);
+  const material = useRef<THREE.PointsMaterial>(null);
+  const count = asset.id === "ancient-tree"
+    ? quality === "high" ? 92 : 38
+    : quality === "high" ? 156 : 62;
+  const extent = getParticleExtent(asset, transform);
+  const glowTexture = useMemo(() => createGlowTexture(32), []);
+  const data = useMemo(() => {
+    const positions = new Float32Array(count * 3);
+    const origins = new Float32Array(count * 3);
+    const colors = new Float32Array(count * 3);
+    const phases = new Float32Array(count);
+    const palette = asset.id === "stage-three-gate"
+      ? [new THREE.Color("#f4ca73"), new THREE.Color("#79d9ef")]
+      : asset.id === "ancient-tree"
+        ? [new THREE.Color("#b6e391"), new THREE.Color("#e8c96f")]
+        : [new THREE.Color("#ffd36e"), new THREE.Color("#8be0bb")];
+    for (let index = 0; index < count; index += 1) {
+      const offset = index * 3;
+      const angle = particleUnit(index, 2) * Math.PI * 2;
+      const radius = 0.24 + particleUnit(index, 5) * 0.76;
+      origins[offset] = Math.cos(angle) * extent * 0.36 * radius;
+      origins[offset + 1] = (particleUnit(index, 8) - 0.46) * extent * 0.66;
+      origins[offset + 2] = Math.sin(angle) * extent * 0.18 * radius;
+      positions[offset] = origins[offset];
+      positions[offset + 1] = origins[offset + 1];
+      positions[offset + 2] = origins[offset + 2];
+      phases[index] = particleUnit(index, 13) * Math.PI * 2;
+      const color = palette[index % palette.length].clone().lerp(new THREE.Color("#fff6d7"), particleUnit(index, 17) * 0.22);
+      colors[offset] = color.r;
+      colors[offset + 1] = color.g;
+      colors[offset + 2] = color.b;
+    }
+    return { positions, origins, colors, phases };
+  }, [asset.id, count, extent]);
+
+  useEffect(() => () => glowTexture.dispose(), [glowTexture]);
+  useFrame(({ clock }) => {
+    const geometry = points.current?.geometry;
+    if (!geometry) return;
+    const time = clock.elapsedTime;
+    for (let index = 0; index < count; index += 1) {
+      const offset = index * 3;
+      const phase = data.phases[index];
+      data.positions[offset] = data.origins[offset] + Math.sin(time * 0.72 + phase) * extent * 0.026;
+      data.positions[offset + 1] = data.origins[offset + 1] + Math.sin(time * 0.94 + phase * 1.37) * extent * 0.034;
+      data.positions[offset + 2] = data.origins[offset + 2] + Math.cos(time * 0.63 + phase * 0.81) * extent * 0.018;
+    }
+    geometry.attributes.position.needsUpdate = true;
+    if (material.current) material.current.opacity = 0.79 + Math.sin(time * 1.1) * 0.14;
+  });
+
+  return <group position={transform.position} rotation={transform.rotation}>
+    <points ref={points} frustumCulled={false}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" args={[data.positions, 3]} />
+        <bufferAttribute attach="attributes-color" args={[data.colors, 3]} />
+      </bufferGeometry>
+      <pointsMaterial ref={material} map={glowTexture} alphaTest={0.008} vertexColors size={Math.max(0.22, extent * (quality === "high" ? 0.0062 : 0.0052))} transparent opacity={0.82} sizeAttenuation depthWrite={false} fog={false} blending={THREE.AdditiveBlending} />
+    </points>
+  </group>;
+}
+
+function LandscapeWaterParticles({ asset, transform, quality }: { asset: SceneAsset; transform: SceneTransform; quality: Quality }) {
+  const points = useRef<THREE.Points>(null);
+  const material = useRef<THREE.PointsMaterial>(null);
+  const count = quality === "high" ? 268 : 98;
+  const extent = getParticleExtent(asset, transform);
+  const glowTexture = useMemo(() => createGlowTexture(24), []);
+  const data = useMemo(() => {
+    const positions = new Float32Array(count * 3);
+    const colors = new Float32Array(count * 3);
+    const baseX = new Float32Array(count);
+    const baseZ = new Float32Array(count);
+    const phases = new Float32Array(count);
+    const speeds = new Float32Array(count);
+    const blue = new THREE.Color("#4bbfff");
+    const paleBlue = new THREE.Color("#a7ecff");
+    for (let index = 0; index < count; index += 1) {
+      const offset = index * 3;
+      baseX[index] = (particleUnit(index, 3) - 0.5) * extent * 0.56;
+      baseZ[index] = (particleUnit(index, 7) - 0.5) * extent * 0.2;
+      phases[index] = particleUnit(index, 11);
+      speeds[index] = 0.13 + particleUnit(index, 15) * 0.13;
+      const color = blue.clone().lerp(paleBlue, particleUnit(index, 19));
+      colors[offset] = color.r;
+      colors[offset + 1] = color.g;
+      colors[offset + 2] = color.b;
+    }
+    return { positions, colors, baseX, baseZ, phases, speeds };
+  }, [count, extent]);
+
+  useEffect(() => () => glowTexture.dispose(), [glowTexture]);
+  useFrame(({ clock }) => {
+    const geometry = points.current?.geometry;
+    if (!geometry) return;
+    const time = clock.elapsedTime;
+    for (let index = 0; index < count; index += 1) {
+      const offset = index * 3;
+      const fall = (data.phases[index] + time * data.speeds[index]) % 1;
+      data.positions[offset] = data.baseX[index] + Math.sin(time * 0.72 + index) * extent * 0.008;
+      data.positions[offset + 1] = extent * 0.31 - fall * extent * 0.68;
+      data.positions[offset + 2] = data.baseZ[index];
+    }
+    geometry.attributes.position.needsUpdate = true;
+    if (material.current) material.current.opacity = 0.8 + Math.sin(time * 0.76) * 0.1;
+  });
+
+  return <group position={transform.position} rotation={transform.rotation}>
+    <points ref={points} frustumCulled={false}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" args={[data.positions, 3]} />
+        <bufferAttribute attach="attributes-color" args={[data.colors, 3]} />
+      </bufferGeometry>
+      <pointsMaterial ref={material} map={glowTexture} alphaTest={0.006} vertexColors size={Math.max(0.2, extent * (quality === "high" ? 0.0047 : 0.004))} transparent opacity={0.84} sizeAttenuation depthWrite={false} fog={false} blending={THREE.AdditiveBlending} />
+    </points>
+  </group>;
+}
+
+function SacredGateParticles({ asset, transform, quality }: { asset: SceneAsset; transform: SceneTransform; quality: Quality }) {
+  const points = useRef<THREE.Points>(null);
+  const material = useRef<THREE.PointsMaterial>(null);
+  const count = quality === "high" ? 324 : 122;
+  const extent = getParticleExtent(asset, transform);
+  const glowTexture = useMemo(() => createGlowTexture(32), []);
+  const data = useMemo(() => {
+    const positions = new Float32Array(count * 3);
+    const colors = new Float32Array(count * 3);
+    const phases = new Float32Array(count);
+    const angles = new Float32Array(count);
+    const speeds = new Float32Array(count);
+    const spreads = new Float32Array(count);
+    const gold = new THREE.Color("#e8b950");
+    const whiteGold = new THREE.Color("#fff4cf");
+    for (let index = 0; index < count; index += 1) {
+      const offset = index * 3;
+      phases[index] = particleUnit(index, 2);
+      angles[index] = particleUnit(index, 6) * Math.PI * 2;
+      speeds[index] = 0.055 + particleUnit(index, 10) * 0.055;
+      spreads[index] = 0.72 + particleUnit(index, 14) * 0.38;
+      const color = gold.clone().lerp(whiteGold, particleUnit(index, 18));
+      colors[offset] = color.r;
+      colors[offset + 1] = color.g;
+      colors[offset + 2] = color.b;
+    }
+    return { positions, colors, phases, angles, speeds, spreads };
+  }, [count]);
+
+  useEffect(() => () => glowTexture.dispose(), [glowTexture]);
+  useFrame(({ clock }) => {
+    const geometry = points.current?.geometry;
+    if (!geometry) return;
+    const time = clock.elapsedTime;
+    for (let index = 0; index < count; index += 1) {
+      const offset = index * 3;
+      const life = (data.phases[index] + time * data.speeds[index]) % 1;
+      const angle = data.angles[index] + time * 0.07 * (index % 2 ? 1 : -1);
+      const radius = extent * (0.055 + life * 0.34) * data.spreads[index];
+      data.positions[offset] = Math.cos(angle) * radius;
+      data.positions[offset + 1] = -extent * 0.35 + life * extent * 0.78 + Math.sin(angle * 2.1) * extent * 0.025;
+      data.positions[offset + 2] = Math.sin(angle) * radius * 0.42;
+    }
+    geometry.attributes.position.needsUpdate = true;
+    if (material.current) material.current.opacity = 0.86 + Math.sin(time * 0.84) * 0.11;
+  });
+
+  return <group position={transform.position} rotation={transform.rotation}>
+    <sprite position={[0, 0, extent * 0.025]} scale={[extent * 0.72, extent * 0.72, 1]}>
+      <spriteMaterial map={glowTexture} color="#dfad4d" transparent opacity={quality === "high" ? 0.18 : 0.13} depthWrite={false} blending={THREE.AdditiveBlending} />
+    </sprite>
+    <points ref={points} frustumCulled={false}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" args={[data.positions, 3]} />
+        <bufferAttribute attach="attributes-color" args={[data.colors, 3]} />
+      </bufferGeometry>
+      <pointsMaterial ref={material} map={glowTexture} alphaTest={0.004} vertexColors size={Math.max(0.26, extent * (quality === "high" ? 0.0056 : 0.0047))} transparent opacity={0.9} sizeAttenuation depthWrite={false} fog={false} blending={THREE.AdditiveBlending} />
+    </points>
+    {quality === "high" && <pointLight position={[0, 0, extent * 0.08]} color="#ffd36e" intensity={82} distance={extent * 0.9} decay={2} />}
+  </group>;
+}
+
+function ArtifactParticleEffect({ asset, transform, quality }: { asset: SceneAsset; transform: SceneTransform; quality: Quality }) {
+  if (asset.id === "landscape-birds") return <LandscapeWaterParticles asset={asset} transform={transform} quality={quality} />;
+  if (asset.id === "civilization-gate") return <SacredGateParticles asset={asset} transform={transform} quality={quality} />;
+  if (["ancient-tree", "stage-two-gate", "stage-three-gate"].includes(asset.id)) return <ArtifactFireflies asset={asset} transform={transform} quality={quality} />;
+  return null;
+}
+
 function disposeModel(root: THREE.Object3D) {
   const textures = new Set<THREE.Texture>();
   root.traverse((object) => {
@@ -566,6 +826,7 @@ function SceneModel({ asset, transform, quality, editing, selected, onSelect, re
   const [failed, setFailed] = useState(false);
   const motion = SCENE_MOTIONS[asset.id] ?? "static";
   const motionIndex = SCENE_ASSETS.findIndex((item) => item.id === asset.id);
+  const modelUrl = getSceneModelUrl(asset, quality);
 
   useFrame(({ clock }, delta) => {
     const target = motionGroup.current;
@@ -582,13 +843,13 @@ function SceneModel({ asset, transform, quality, editing, selected, onSelect, re
 
     const transformScale = Math.max(...transform.scale.map((value) => Math.abs(value)), 0.001);
     const phaseOffset = Math.max(motionIndex, 0) * 0.73;
-    const floatSpeed = motion === "rotate-z-float" ? 0.82 : 0.68;
-    const worldAmplitude = motion === "rotate-z-float" ? 0.42 : 0.34;
+    const floatSpeed = motion === "rotate-z-float" ? 0.7 : 0.62;
+    const worldAmplitude = motion === "rotate-z-float" ? 0.38 : 0.32;
     const targetY = Math.sin(clock.elapsedTime * floatSpeed + phaseOffset) * worldAmplitude / transformScale;
     target.position.y = THREE.MathUtils.damp(target.position.y, targetY, 4.8, delta);
 
     if (motion === "rotate-z-float") {
-      const rotationSpeed = 0.16 + (Math.max(motionIndex, 0) % 3) * 0.025;
+      const rotationSpeed = 0.065;
       target.rotation.y = 0;
       target.rotation.z = (target.rotation.z + delta * rotationSpeed) % (Math.PI * 2);
     } else {
@@ -601,8 +862,10 @@ function SceneModel({ asset, transform, quality, editing, selected, onSelect, re
     let disposed = false;
     let loaded: THREE.Group | null = null;
     let loadedMixer: THREE.AnimationMixer | null = null;
+    setFailed(false);
+    setModel(null);
     const loader = new GLTFLoader().setDRACOLoader(dracoLoader);
-    loader.load(asset.url, (gltf) => {
+    loader.load(modelUrl, (gltf) => {
       loaded = gltf.scene;
       const removable: THREE.Object3D[] = [];
       loaded.traverse((object) => {
@@ -631,10 +894,10 @@ function SceneModel({ asset, transform, quality, editing, selected, onSelect, re
       if (animationMixer.current === loadedMixer) animationMixer.current = null;
       if (loaded) disposeModel(loaded);
     };
-  }, [asset.url]);
+  }, [modelUrl]);
 
   useEffect(() => {
-    if (editing) {
+    if (editing || asset.id === "cave") {
       setCollider(null);
       return;
     }
@@ -660,7 +923,7 @@ function SceneModel({ asset, transform, quality, editing, selected, onSelect, re
       disposed = true;
       if (loaded) disposeModel(loaded);
     };
-  }, [asset.url, editing]);
+  }, [asset.id, asset.url, editing]);
 
   useEffect(() => {
     model?.traverse((object) => {
@@ -862,7 +1125,14 @@ function SceneAssetField({ progressRef, transforms, quality, editing, selectedId
     const offset = distance - streamCenter;
     const editorCenter = selectedId ? -transforms[selectedId].position[2] : streamCenter;
     if (editing) return Math.abs(distance - editorCenter) <= 175;
-    return (offset >= -125 && offset <= 110) || (streamCenter < 12 && distance < 190);
+    const trailingDistance = quality === "high" ? 100 : 65;
+    const caveStreamingWindow = streamCenter < 125;
+    const leadingDistance = caveStreamingWindow
+      ? quality === "high" ? 95 : 66
+      : quality === "high" ? 145 : 90;
+    const initialLeadingDistance = quality === "high" ? 96 : 72;
+    return (offset >= -trailingDistance && offset <= leadingDistance)
+      || (streamCenter < 12 && distance < initialLeadingDistance);
   });
   const target = selectedId ? assetObjects[selectedId] ?? null : null;
   const captureTransform = useCallback((id: string, object: THREE.Object3D) => {
@@ -875,7 +1145,7 @@ function SceneAssetField({ progressRef, transforms, quality, editing, selectedId
 
   return <>
     {loadedAssets.map((asset) => <SceneModel
-      key={asset.id}
+      key={`${quality}-${asset.id}`}
       asset={asset}
       transform={transforms[asset.id]}
       quality={quality}
@@ -884,6 +1154,12 @@ function SceneAssetField({ progressRef, transforms, quality, editing, selectedId
       onSelect={onSelect}
       register={register}
       registerCollider={onColliderRegister}
+    />)}
+    {!editing && loadedAssets.map((asset) => <ArtifactParticleEffect
+      key={`particles-${quality}-${asset.id}`}
+      asset={asset}
+      transform={transforms[asset.id]}
+      quality={quality}
     />)}
     {editing && <TransformGizmo
       target={target}
@@ -981,7 +1257,7 @@ function SceneEditorPanel({ selectedId, transforms, mode, local, uniformScale, o
   </aside>;
 }
 
-function Xiyu({ playerRef, controls, started, entering, cruising }: { playerRef: RefObject<THREE.Group | null>; controls: RefObject<Controls>; started: boolean; entering: boolean; cruising: boolean }) {
+function Xiyu({ playerRef, controls, started, entering, cruising, quality }: { playerRef: RefObject<THREE.Group | null>; controls: RefObject<Controls>; started: boolean; entering: boolean; cruising: boolean; quality: Quality }) {
   const halo = useRef<THREE.Group>(null);
   const characterScale = useRef<THREE.Group>(null);
   const modelMotion = useRef<THREE.Group>(null);
@@ -989,7 +1265,7 @@ function Xiyu({ playerRef, controls, started, entering, cruising }: { playerRef:
   const idlePhase = useRef(0);
   const cruiseBlend = useRef(1);
   const boostBlend = useRef(0);
-  const gltf = useLoader(GLTFLoader, "/models/xiyu.glb");
+  const gltf = useLoader(GLTFLoader, quality === "eco" ? "/models/xiyu-eco.glb" : "/models/xiyu.glb", (loader) => loader.setDRACOLoader(dracoLoader));
   const mixer = useMemo(() => new THREE.AnimationMixer(gltf.scene), [gltf.scene]);
   const animationClip = useMemo(() => {
     const source = gltf.animations[0];
@@ -1130,7 +1406,7 @@ function Xiyu({ playerRef, controls, started, entering, cruising }: { playerRef:
           <IntroSunbirds />
         </>}
       </group>
-      <pointLight position={[0, 0.35, 1.6]} color="#f3c666" intensity={18} distance={11} />
+      {quality === "high" && <pointLight position={[0, 0.35, 1.6]} color="#f3c666" intensity={18} distance={11} />}
     </group>
   );
 }
@@ -1189,8 +1465,10 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
   const visualLateral = useMemo(() => new THREE.Vector2(), []);
   const caveViewTilt = useRef(new THREE.Vector2());
   const caveRailActive = useRef(false);
+  const caveDprReduced = useRef(false);
   const collisionUp = useMemo(() => new THREE.Vector3(0, 1, 0), []);
   const collisionSide = useMemo(() => new THREE.Vector3(1, 0, 0), []);
+  const prefersReducedMotion = useMemo(() => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches, []);
   const editorOrbit = useRef({ yaw: -1.12, pitch: 0.12, zoom: 1, dragging: false, pointerId: -1, x: 0, y: 0 });
 
   const registerCollider = useCallback((id: string, object: THREE.Group | null) => {
@@ -1203,6 +1481,23 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
     }
     else delete colliderObjects.current[id];
   }, []);
+
+  const normalPixelRatio = useMemo(() => {
+    const devicePixelRatio = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
+    return quality === "high"
+      ? THREE.MathUtils.clamp(devicePixelRatio, 0.9, 1.35)
+      : THREE.MathUtils.clamp(devicePixelRatio, 0.6, 0.85);
+  }, [quality]);
+  const cavePixelRatio = useMemo(() => Math.max(
+    quality === "high" ? 0.78 : 0.55,
+    normalPixelRatio * (quality === "high" ? 0.78 : 0.8),
+  ), [normalPixelRatio, quality]);
+
+  useEffect(() => {
+    caveDprReduced.current = false;
+    gl.setPixelRatio(normalPixelRatio);
+    return () => gl.setPixelRatio(normalPixelRatio);
+  }, [gl, normalPixelRatio]);
 
   const findCollision = useCallback((
     origin: THREE.Vector3,
@@ -1220,11 +1515,12 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
     ).normalize();
     collisionBasisV.crossVectors(collisionDirection, collisionBasisU).normalize();
     let closestHit: CollisionHit | null = null;
-    for (let rayIndex = 0; rayIndex < 9; rayIndex += 1) {
+    const rayCount = quality === "high" ? 9 : 5;
+    for (let rayIndex = 0; rayIndex < rayCount; rayIndex += 1) {
       collisionOrigin.copy(origin);
       let forwardExtent = radius;
       if (rayIndex > 0) {
-        const angle = (rayIndex - 1) * Math.PI / 4;
+        const angle = (rayIndex - 1) * Math.PI * 2 / (rayCount - 1);
         collisionOrigin.addScaledVector(collisionBasisU, Math.cos(angle) * radius);
         collisionOrigin.addScaledVector(collisionBasisV, Math.sin(angle) * radius);
         forwardExtent = 0;
@@ -1271,7 +1567,7 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
       }
     }
     return closestHit;
-  }, [collisionBasisU, collisionBasisV, collisionBoxCenter, collisionDirection, collisionOrigin, collisionRaycaster, collisionSide, collisionUp]);
+  }, [collisionBasisU, collisionBasisV, collisionBoxCenter, collisionDirection, collisionOrigin, collisionRaycaster, collisionSide, collisionUp, quality]);
 
   const lockToCaveTrack = useCallback((point: THREE.Vector2, routeProgress: number) => {
     const transform = transforms.cave;
@@ -1292,8 +1588,8 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
     const middleBend = THREE.MathUtils.smoothstep(tunnelProgress, 0.4, 0.6);
     const floor = transform.position[1] + (0.18 - arch * 0.18) * scaleFactor;
     const ceiling = transform.position[1] + (7.8 + arch * 4.5) * scaleFactor;
-    point.x = transform.position[0] - middleBend * 1.2 * scaleFactor;
-    point.y = (floor + ceiling) * 0.5 - (7.2 + middleBend * 0.7) * scaleFactor;
+    point.x = transform.position[0] + (CAVE_TRACK_OFFSET[0] - middleBend * 1.2) * scaleFactor;
+    point.y = (floor + ceiling) * 0.5 - (7.2 + middleBend * 0.7) * scaleFactor + CAVE_TRACK_OFFSET[1] * scaleFactor;
     return true;
   }, [transforms]);
 
@@ -1374,7 +1670,7 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
     const opticalCenterX = isMobileViewport ? 0 : -0.17;
     if (state.camera instanceof THREE.PerspectiveCamera) {
       const collisionCompression = THREE.MathUtils.clamp((9 - cameraCollisionDistance.current) / 6.5, 0, 1);
-      const targetFov = editing ? 32 : 58 + collisionCompression * 3.2;
+      const targetFov = editing ? 32 : 60 + collisionCompression * 3.2 + forwardBoost.current * 2.4;
       const nextFov = THREE.MathUtils.damp(state.camera.fov, targetFov, 7.5, delta);
       if (Math.abs(nextFov - state.camera.fov) > 0.001) {
         state.camera.fov = nextFov;
@@ -1410,8 +1706,7 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
     caveRailActive.current = caveLocked;
     if (caveLocked) lateral.current.copy(caveCandidate);
     if (started && !paused && progress.current < ROUTE_LENGTH) {
-      const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-      const speed = (reducedMotion ? 3.2 : 5.8) * (1 + forwardBoost.current * 0.82) * forwardMotion.current;
+      const speed = (prefersReducedMotion ? 3.2 : 5.8) * (1 + forwardBoost.current * 0.82) * forwardMotion.current;
       const xAxis = THREE.MathUtils.clamp((input.right ? 1 : 0) - (input.left ? 1 : 0) + input.touchX, -1, 1);
       const yAxis = THREE.MathUtils.clamp((input.up ? 1 : 0) - (input.down ? 1 : 0) + input.touchY, -1, 1);
       caveViewTilt.current.x = THREE.MathUtils.damp(caveViewTilt.current.x, caveLocked ? xAxis : 0, caveLocked ? 5.2 : 3.8, delta);
@@ -1429,8 +1724,6 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
         velocity.current.x = THREE.MathUtils.clamp(velocity.current.x, input.boost ? -7.2 : -5.4, input.boost ? 7.2 : 5.4);
         velocity.current.y = THREE.MathUtils.clamp(velocity.current.y, input.boost ? -5.3 : -4.1, input.boost ? 5.3 : 4.1);
       }
-      world.current?.updateMatrixWorld(true);
-
       const intendedX = caveLocked ? lateral.current.x : THREE.MathUtils.clamp(lateral.current.x + velocity.current.x * delta, -horizontalLimit, horizontalLimit);
       const intendedY = caveLocked ? lateral.current.y : THREE.MathUtils.clamp(lateral.current.y + velocity.current.y * delta, -verticalLimit, verticalLimit);
 
@@ -1469,26 +1762,29 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
 
       const forwardDistance = Math.min(ROUTE_LENGTH - progress.current, Math.max(0, speed * delta));
       if (forwardDistance > 0.002) {
-        collisionOrigin.set(lateral.current.x, lateral.current.y, 0);
-        collisionMotion.set(0, 0, -forwardDistance);
-        const hit = findCollision(collisionOrigin, collisionMotion, FORWARD_COLLISION_EXCLUSIONS, PLAYER_COLLISION_RADIUS);
-        if (!hit) progress.current += forwardDistance;
+        if (caveLocked) progress.current += forwardDistance;
         else {
-          const safeDistance = THREE.MathUtils.clamp(hit.distance - COLLISION_SKIN, 0, forwardDistance);
-          progress.current += safeDistance;
-          collisionSlideNormal.copy(hit.normal).setZ(0);
-          if (collisionSlideNormal.lengthSq() < 0.015) {
-            const collider = colliderObjects.current[hit.assetId];
-            collider?.bounds.getCenter(collisionBoxCenter);
-            const preferredSide = collider
-              ? Math.sign(lateral.current.x - collisionBoxCenter.x || velocity.current.x || 1)
-              : Math.sign(velocity.current.x || 1);
-            collisionSlideNormal.set(preferredSide, 0, 0);
-          } else collisionSlideNormal.normalize();
-          const blockedDistance = Math.max(0, forwardDistance - safeDistance);
-          const separation = THREE.MathUtils.clamp(0.018 + blockedDistance * 0.75, 0.018, 0.11);
-          lateral.current.x = THREE.MathUtils.clamp(lateral.current.x + collisionSlideNormal.x * separation, -horizontalLimit, horizontalLimit);
-          lateral.current.y = THREE.MathUtils.clamp(lateral.current.y + collisionSlideNormal.y * separation, -verticalLimit, verticalLimit);
+          collisionOrigin.set(lateral.current.x, lateral.current.y, 0);
+          collisionMotion.set(0, 0, -forwardDistance);
+          const hit = findCollision(collisionOrigin, collisionMotion, FORWARD_COLLISION_EXCLUSIONS, PLAYER_COLLISION_RADIUS);
+          if (!hit) progress.current += forwardDistance;
+          else {
+            const safeDistance = THREE.MathUtils.clamp(hit.distance - COLLISION_SKIN, 0, forwardDistance);
+            progress.current += safeDistance;
+            collisionSlideNormal.copy(hit.normal).setZ(0);
+            if (collisionSlideNormal.lengthSq() < 0.015) {
+              const collider = colliderObjects.current[hit.assetId];
+              collider?.bounds.getCenter(collisionBoxCenter);
+              const preferredSide = collider
+                ? Math.sign(lateral.current.x - collisionBoxCenter.x || velocity.current.x || 1)
+                : Math.sign(velocity.current.x || 1);
+              collisionSlideNormal.set(preferredSide, 0, 0);
+            } else collisionSlideNormal.normalize();
+            const blockedDistance = Math.max(0, forwardDistance - safeDistance);
+            const separation = THREE.MathUtils.clamp(0.018 + blockedDistance * 0.75, 0.018, 0.11);
+            lateral.current.x = THREE.MathUtils.clamp(lateral.current.x + collisionSlideNormal.x * separation, -horizontalLimit, horizontalLimit);
+            lateral.current.y = THREE.MathUtils.clamp(lateral.current.y + collisionSlideNormal.y * separation, -verticalLimit, verticalLimit);
+          }
         }
       }
     }
@@ -1500,9 +1796,13 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
       caveViewTilt.current.x = THREE.MathUtils.damp(caveViewTilt.current.x, 0, 3.8, delta);
       caveViewTilt.current.y = THREE.MathUtils.damp(caveViewTilt.current.y, 0, 3.8, delta);
     }
+    const shouldReduceCaveDpr = started && !editing && progress.current < 155;
+    if (shouldReduceCaveDpr !== caveDprReduced.current) {
+      gl.setPixelRatio(shouldReduceCaveDpr ? cavePixelRatio : normalPixelRatio);
+      caveDprReduced.current = shouldReduceCaveDpr;
+    }
     if (world.current) {
       world.current.position.z = progress.current;
-      world.current.updateMatrixWorld(true);
     }
     if (player.current) {
       visualLateral.set(
@@ -1549,10 +1849,10 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
       );
       cameraMotion.copy(cameraDesired).sub(cameraAnchor);
       const cameraMotionLength = cameraMotion.length();
-      const cameraHit = findCollision(
+      const cameraHit = caveRailActive.current ? null : findCollision(
         cameraAnchor,
         cameraMotion,
-        caveRailActive.current ? CAMERA_CAVE_COLLISION_EXCLUSIONS : CAMERA_COLLISION_EXCLUSIONS,
+        CAMERA_COLLISION_EXCLUSIONS,
         CAMERA_COLLISION_RADIUS,
       );
       const rawPermittedCameraDistance = cameraHit
@@ -1620,14 +1920,14 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
     const stageIndex = Math.min(2, Math.floor(stageBlend));
     const nextIndex = Math.min(2, stageIndex + 1);
     const mix = stageBlend - stageIndex;
-    backgroundTarget.set(ATMOSPHERE_COLORS[stageIndex]).lerp(new THREE.Color(ATMOSPHERE_COLORS[nextIndex]), mix);
-    fogTarget.set(FOG_COLORS[stageIndex]).lerp(new THREE.Color(FOG_COLORS[nextIndex]), mix);
+    backgroundTarget.copy(ATMOSPHERE_COLOR_VALUES[stageIndex]).lerp(ATMOSPHERE_COLOR_VALUES[nextIndex], mix);
+    fogTarget.copy(FOG_COLOR_VALUES[stageIndex]).lerp(FOG_COLOR_VALUES[nextIndex], mix);
     if (forwardBoost.current > 0.001) backgroundTarget.offsetHSL(0, 0.04 * forwardBoost.current, 0.018 * forwardBoost.current);
     if (state.scene.background instanceof THREE.Color) state.scene.background.lerp(backgroundTarget, 1 - Math.exp(-delta * 0.65));
     if (state.scene.fog instanceof THREE.Fog) {
       state.scene.fog.color.lerp(fogTarget, 1 - Math.exp(-delta * 0.65));
-      state.scene.fog.near = THREE.MathUtils.damp(state.scene.fog.near, editing ? 650 : 9, 5.5, delta);
-      state.scene.fog.far = THREE.MathUtils.damp(state.scene.fog.far, editing ? 1400 : quality === "high" ? 92 : 72, 5.5, delta);
+      state.scene.fog.near = THREE.MathUtils.damp(state.scene.fog.near, editing ? 650 : 14, 5.5, delta);
+      state.scene.fog.far = THREE.MathUtils.damp(state.scene.fog.far, editing ? 1400 : quality === "high" ? 138 : 102, 5.5, delta);
     }
 
     if (state.clock.elapsedTime - lastReport.current > 0.12) {
@@ -1659,17 +1959,17 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
   return (
     <>
       <color attach="background" args={["#050b0d"]} />
-      <fog attach="fog" args={["#071215", 9, quality === "high" ? 92 : 72]} />
+      <fog attach="fog" args={["#071215", 14, quality === "high" ? 138 : 102]} />
       <ambientLight intensity={0.86} color="#709b94" />
       <hemisphereLight args={["#8ccbbb", "#160a05", 0.62]} />
       <directionalLight position={[5, 9, 6]} intensity={3.45} color="#ffd37a" />
       <EditorHeadlight enabled={editing} />
       <group ref={world}>
-        {started && !editing && <><RouteFrames transforms={transforms} /><StarField quality={quality} /></>}
-        {started && !editing && <>
-          <pointLight position={[-8, 7, -185]} color="#65b8a4" intensity={72} distance={250} decay={2} />
-          <pointLight position={[9, 5, -560]} color="#d8973e" intensity={88} distance={270} decay={2} />
-          <pointLight position={[-5, 8, -920]} color="#9c72da" intensity={82} distance={260} decay={2} />
+        {started && !editing && <><DepthCorridor quality={quality} /><RouteFrames transforms={transforms} /><StarField quality={quality} /></>}
+        {quality === "high" && started && !editing && <>
+          <pointLight position={[-8, 7, -270]} color="#65b8a4" intensity={72} distance={300} decay={2} />
+          <pointLight position={[9, 5, -700]} color="#d8973e" intensity={88} distance={320} decay={2} />
+          <pointLight position={[-5, 8, -1210]} color="#9c72da" intensity={82} distance={300} decay={2} />
         </>}
         <SceneAssetField
           progressRef={progress}
@@ -1689,7 +1989,7 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
       {!editing && <>
         <SpeedLines quality={quality} controls={controls} cruising={cruising} />
         <Suspense fallback={null}>
-          <Xiyu playerRef={player} controls={controls} started={started} entering={entering} cruising={cruising} />
+          <Xiyu playerRef={player} controls={controls} started={started} entering={entering} cruising={cruising} quality={quality} />
         </Suspense>
         <FireflyTrail playerRef={player} quality={quality} active={started && cruising && !paused} />
       </>}
@@ -1703,7 +2003,7 @@ function JinshaExperienceCore() {
   const [entering, setEntering] = useState(false);
   const [paused, setPaused] = useState(false);
   const [pauseClosing, setPauseClosing] = useState(false);
-  const [quality, setQuality] = useState<Quality>("high");
+  const [quality, setQuality] = useState<Quality>(getRecommendedQuality);
   const [resetKey, setResetKey] = useState(0);
   const [boosting, setBoosting] = useState(false);
   const [cruising, setCruising] = useState(true);
@@ -1767,7 +2067,7 @@ function JinshaExperienceCore() {
   const activeArtifact = telemetryArtifact ?? (entered && telemetry.progress >= INITIAL_ARTIFACT_REVEAL_PROGRESS && telemetry.progress < 44 ? initialArtifact : null);
   const showFlightPrompt = entered && !entering && telemetry.progress < 12 && !activeArtifact && !paused && !editing;
   const stage = STAGES[telemetry.stage];
-  const renderQuality: Quality = telemetry.stage === 0 && !editing ? "eco" : quality;
+  const renderQuality: Quality = quality;
   const progressPercent = Math.min(100, telemetry.progress / ROUTE_LENGTH * 100);
   const dialogueDistortion = telemetry.stage === 0
     ? 1
@@ -1777,10 +2077,6 @@ function JinshaExperienceCore() {
   const dialogueStyle = { "--dialogue-distortion": dialogueDistortion } as CSSProperties;
   const renderedArtifact = activeArtifact ?? displayArtifact;
   const artifactCaptionLines = renderedArtifact ? getArtifactCaptionLines(renderedArtifact.caption) : [];
-
-  useEffect(() => {
-    if (typeof window !== "undefined" && (window.innerWidth < 760 || navigator.hardwareConcurrency <= 4)) setQuality("eco");
-  }, []);
 
   useLayoutEffect(() => {
     if (activeArtifact) setDisplayArtifact(activeArtifact);
@@ -1946,8 +2242,8 @@ function JinshaExperienceCore() {
     setEditing(false);
     setEntering(true);
   };
-  const replay = () => { setCompletionAction(null); setResetKey((value) => value + 1); setEntering(false); setCruising(true); setPauseClosing(false); setPaused(false); setEditing(false); setEntered(true); };
-  const returnToIntro = () => {
+  const replay = () => { setResetKey((value) => value + 1); setEntering(false); setCruising(true); setPauseClosing(false); setPaused(false); setEditing(false); setEntered(true); };
+  const resetToIntro = () => {
     controls.current = { left: false, right: false, up: false, down: false, boost: false, touchX: 0, touchY: 0 };
     touchDrag.current.pointerId = -1;
     setBoosting(false);
@@ -1957,8 +2253,11 @@ function JinshaExperienceCore() {
     setPaused(false);
     setEditing(false);
     setEntered(false);
-    setCompletionAction(null);
     setResetKey((value) => value + 1);
+  };
+  const returnToIntro = () => {
+    setCompletionAction(null);
+    resetToIntro();
   };
   const requestCompletionExit = (action: "replay" | "intro") => {
     if (completionAction) return;
@@ -2066,28 +2365,41 @@ function JinshaExperienceCore() {
   }, { scope: experienceRef, dependencies: [entered, entering, activeArtifact?.id, renderedArtifact?.id] });
 
   useGSAP((_, contextSafe) => {
+    if (!completionAction) return;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const action = completionAction;
+    const swapJourney = contextSafe(() => {
+      if (action === "replay") replay();
+      else resetToIntro();
+    });
+    const finishTransition = contextSafe(() => setCompletionAction(null));
+    const transitionTimeline = gsap.timeline({
+      defaults: { ease: "power3.inOut" },
+    });
+
+    transitionTimeline
+      .addLabel("depart", 0)
+      .to(".completion-actions", { autoAlpha: 0, y: reduceMotion ? 0 : 16, duration: reduceMotion ? 0.01 : 0.38 }, "depart")
+      .to(".completion-stages", { autoAlpha: 0, y: reduceMotion ? 0 : 12, duration: reduceMotion ? 0.01 : 0.42 }, "depart+=0.04")
+      .to([".completion-copy", ".completion-title", ".completion-kicker"], { autoAlpha: 0, y: reduceMotion ? 0 : -14, duration: reduceMotion ? 0.01 : 0.4, stagger: 0.045 }, "depart+=0.08")
+      .to(".completion-seal", { autoAlpha: 0, scale: reduceMotion ? 1 : 0.68, rotation: reduceMotion ? 0 : -14, duration: reduceMotion ? 0.01 : 0.52 }, "depart+=0.13")
+      .to(".completion-rings", { autoAlpha: 0, scale: reduceMotion ? 1 : 1.16, duration: reduceMotion ? 0.01 : 0.58 }, "depart+=0.15")
+      .fromTo(".journey-transition", { autoAlpha: 0 }, { autoAlpha: 1, duration: reduceMotion ? 0.01 : 0.82 }, "depart+=0.2")
+      .fromTo(".journey-transition__halo", { autoAlpha: 0, scale: reduceMotion ? 1 : 0.22 }, { autoAlpha: 1, scale: 1.12, duration: reduceMotion ? 0.01 : 0.92, ease: "power3.out" }, "depart+=0.12")
+      .fromTo(".journey-transition__line", { autoAlpha: 0, scaleX: reduceMotion ? 1 : 0.08 }, { autoAlpha: 1, scaleX: 1, duration: reduceMotion ? 0.01 : 0.72, transformOrigin: "center center" }, "depart+=0.3")
+      .to(".completion-card", { autoAlpha: 0, duration: reduceMotion ? 0.01 : 0.62 }, "depart+=0.3")
+      .addLabel("covered", reduceMotion ? 0.04 : 1.08)
+      .call(swapJourney, [], "covered")
+      .addLabel("reveal", reduceMotion ? "covered+=0.02" : "covered+=0.18")
+      .to(".journey-transition__line", { autoAlpha: 0, scaleX: reduceMotion ? 1 : 1.7, duration: reduceMotion ? 0.01 : 0.54, ease: "power2.in" }, "reveal")
+      .to(".journey-transition__halo", { autoAlpha: 0, scale: reduceMotion ? 1 : 1.8, duration: reduceMotion ? 0.01 : 0.92, ease: "power3.inOut" }, "reveal")
+      .to(".journey-transition", { autoAlpha: 0, duration: reduceMotion ? 0.01 : 0.92 }, "reveal+=0.08")
+      .call(finishTransition);
+  }, { scope: experienceRef, dependencies: [completionAction], revertOnUpdate: true });
+
+  useGSAP(() => {
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (telemetry.finished) {
-      if (completionAction) {
-        const finishExit = contextSafe(() => {
-          if (completionAction === "replay") replay();
-          else returnToIntro();
-        });
-        const exitTimeline = gsap.timeline({
-          defaults: { duration: reduceMotion ? 0.01 : 0.46, ease: "power3.inOut" },
-          onComplete: finishExit,
-        });
-        exitTimeline
-          .to(".completion-actions", { autoAlpha: 0, y: reduceMotion ? 0 : 14 }, 0)
-          .to(".completion-stages", { autoAlpha: 0, y: reduceMotion ? 0 : 10 }, 0.05)
-          .to([".completion-copy", ".completion-title", ".completion-kicker"], { autoAlpha: 0, y: reduceMotion ? 0 : -12, stagger: 0.045 }, 0.1)
-          .to(".completion-seal", { autoAlpha: 0, scale: reduceMotion ? 1 : 0.72, rotation: reduceMotion ? 0 : -12 }, 0.16)
-          .to(".completion-rings", { autoAlpha: 0, scale: reduceMotion ? 1 : 1.12 }, 0.18)
-          .to(".completion-beam", { autoAlpha: 0, scaleY: reduceMotion ? 1 : 0.45, transformOrigin: "top center" }, 0.2)
-          .to(".completion-card", { autoAlpha: 0, duration: reduceMotion ? 0.01 : 0.68 }, 0.28);
-        return;
-      }
-
       const completionTimeline = gsap.timeline({ defaults: { duration: reduceMotion ? 0.01 : 0.72, ease: "power3.out" } });
       completionTimeline
         .fromTo(".completion-card", { autoAlpha: 0 }, { autoAlpha: 1 }, 0)
@@ -2120,12 +2432,12 @@ function JinshaExperienceCore() {
     timeline
       .fromTo(".pause-card", { autoAlpha: 0 }, { autoAlpha: 1 }, 0)
       .fromTo(".pause-card > *", { autoAlpha: 0, y: reduceMotion ? 0 : 18 }, { autoAlpha: 1, y: 0, stagger: 0.1 }, 0.16);
-  }, { scope: experienceRef, dependencies: [paused, pauseClosing, telemetry.finished, completionAction], revertOnUpdate: true });
+  }, { scope: experienceRef, dependencies: [paused, pauseClosing, telemetry.finished], revertOnUpdate: true });
 
   return (
-    <main ref={experienceRef} className={`experience stage-${telemetry.stage + 1} ${entered ? "is-running" : "is-intro"} ${entering ? "is-entering" : ""} ${editing ? "is-editing" : ""} ${boosting && cruising && entered && !paused && !editing ? "is-boosting" : ""} ${!cruising && entered ? "is-stopped" : ""}`}>
+    <main ref={experienceRef} className={`experience quality-${quality} stage-${telemetry.stage + 1} ${entered ? "is-running" : "is-intro"} ${entering ? "is-entering" : ""} ${editing ? "is-editing" : ""} ${boosting && cruising && entered && !paused && !editing ? "is-boosting" : ""} ${!cruising && entered ? "is-stopped" : ""}`}>
       <div className="scene" aria-label="羽见千年三维体验场景">
-        <Canvas camera={{ position: [0, 2.6, 11], fov: 58, near: 0.02, far: 520 }} dpr={renderQuality === "high" ? [1, 1.65] : [0.75, 1.1]} gl={{ antialias: quality === "high", powerPreference: quality === "high" ? "high-performance" : "low-power" }}>
+        <Canvas camera={{ position: [0, 2.6, 11], fov: 58, near: 0.02, far: 520 }} dpr={renderQuality === "high" ? [0.9, 1.35] : [0.6, 0.85]} gl={{ antialias: quality === "high", alpha: false, stencil: false, powerPreference: "high-performance" }}>
           <FlightScene
             started={entered}
             entering={entering}
@@ -2145,6 +2457,11 @@ function JinshaExperienceCore() {
             onTelemetry={reportTelemetry}
           />
         </Canvas>
+      </div>
+
+      <div className="journey-transition" aria-hidden="true">
+        <i className="journey-transition__halo" />
+        <span className="journey-transition__line" />
       </div>
 
       <div className="stage-effects" aria-hidden="true">
@@ -2282,7 +2599,7 @@ function CriticalLoadingScreen({ progress, leaving }: { progress: number; leavin
       <p>JINSHA IMMERSIVE ARCHIVE</p>
       <h1>正在唤醒金沙记忆</h1>
       <div className="critical-loading-route" aria-hidden="true">
-        {CRITICAL_MODEL_URLS.map((url, index) => <i key={url} className={progress >= (index + 1) / CRITICAL_MODEL_URLS.length * 100 ? "is-loaded" : ""} />)}
+        {Array.from({ length: 5 }, (_, index) => <i key={index} className={progress >= (index + 1) * 20 ? "is-loaded" : ""} />)}
       </div>
       <strong>{String(progress).padStart(2, "0")}<small>%</small></strong>
       <span>沉浸场景准备中</span>
@@ -2294,42 +2611,32 @@ export function JinshaExperience() {
   const [criticalProgress, setCriticalProgress] = useState(0);
   const [criticalLeaving, setCriticalLeaving] = useState(false);
   const [criticalReady, setCriticalReady] = useState(false);
+  const [coreMounted, setCoreMounted] = useState(false);
 
   useEffect(() => {
     let active = true;
-    let completed = 0;
-    let readyTimer = 0;
-    let exitTimer = 0;
-    const startedAt = performance.now();
     THREE.Cache.enabled = true;
-
-    const loads = CRITICAL_MODEL_URLS.map(async (url) => {
-      const loader = new GLTFLoader().setDRACOLoader(dracoLoader);
-      try {
-        const gltf = await loader.loadAsync(url);
-        disposeModel(gltf.scene);
-      } finally {
-        completed += 1;
-        if (active) setCriticalProgress(Math.round(completed / CRITICAL_MODEL_URLS.length * 100));
-      }
-    });
-
-    void Promise.allSettled(loads).then(() => {
-      const remaining = Math.max(0, 900 - (performance.now() - startedAt));
-      readyTimer = window.setTimeout(() => {
+    setCoreMounted(true);
+    const progressTimers = [
+      window.setTimeout(() => { if (active) setCriticalProgress(28); }, 80),
+      window.setTimeout(() => { if (active) setCriticalProgress(56); }, 190),
+      window.setTimeout(() => { if (active) setCriticalProgress(82); }, 340),
+      window.setTimeout(() => {
         if (!active) return;
         setCriticalProgress(100);
         setCriticalLeaving(true);
-        exitTimer = window.setTimeout(() => { if (active) setCriticalReady(true); }, 720);
-      }, remaining);
-    });
+      }, 520),
+      window.setTimeout(() => { if (active) setCriticalReady(true); }, 940),
+    ];
 
     return () => {
       active = false;
-      window.clearTimeout(readyTimer);
-      window.clearTimeout(exitTimer);
+      progressTimers.forEach((timer) => window.clearTimeout(timer));
     };
   }, []);
 
-  return criticalReady ? <JinshaExperienceCore /> : <CriticalLoadingScreen progress={criticalProgress} leaving={criticalLeaving} />;
+  return <>
+    {coreMounted && <JinshaExperienceCore />}
+    {!criticalReady && <CriticalLoadingScreen progress={criticalProgress} leaving={criticalLeaving} />}
+  </>;
 }
