@@ -2162,11 +2162,6 @@ function JinshaExperienceCore() {
         if (!event.repeat) toggleCruising();
         return;
       }
-      if ((event.code === "KeyW" || event.code === "ArrowUp") && entered && !paused && !cruising) {
-        event.preventDefault();
-        if (!event.repeat) setCruising(true);
-        return;
-      }
       if ((event.code === "ShiftLeft" || event.code === "ShiftRight") && entered) {
         event.preventDefault();
         if (event.repeat) return;
