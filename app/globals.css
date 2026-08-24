@@ -1,5 +1,14 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: "Jinsha Title Serif";
+  src: url("/fonts/jinsha-title-serif.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  unicode-range: U+5343, U+5E74, U+7FBD, U+89C1;
+}
+
 :root {
   --void: #050b0d;
   --ink: #091417;
@@ -47,6 +56,7 @@ button { font: inherit; }
 .experience {
   position: relative;
   width: 100vw;
+  height: 100vh;
   height: 100svh;
   isolation: isolate;
   background: var(--void);
@@ -58,6 +68,7 @@ button { font: inherit; }
   inset: 0;
   display: grid;
   width: 100vw;
+  height: 100vh;
   height: 100svh;
   min-height: 520px;
   overflow: hidden;
@@ -468,7 +479,7 @@ button { font: inherit; }
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  font-family: "Noto Serif SC", STSong, "Songti SC", serif;
+  font-family: "Jinsha Title Serif", "Noto Serif SC", STSong, "Songti SC", SimSun, serif;
   font-size: clamp(64px, 7.2vw, 112px);
   font-weight: 400;
   line-height: 0.94;
@@ -1019,6 +1030,13 @@ button { font: inherit; }
 .touch-controls,
 .mobile-flight-instruction { display: none; }
 .no-webgl { position: absolute; z-index: 20; inset: 0; display: grid; place-items: center; background: var(--void); }
+.compatibility-screen { position: fixed; z-index: 100; inset: 0; display: grid; align-content: center; justify-items: center; padding: 28px; overflow: hidden; background: radial-gradient(circle at 50% 42%, rgba(55, 102, 95, 0.15), transparent 38%), #050b0d; color: var(--bone); text-align: center; }
+.compatibility-screen::before { content: ""; position: absolute; inset: 18px; border: 1px solid rgba(216, 169, 74, 0.18); pointer-events: none; }
+.compatibility-screen__seal { display: grid; width: 78px; aspect-ratio: 1; margin-bottom: 26px; place-items: center; border: 1px solid rgba(216, 169, 74, 0.34); border-radius: 50%; color: var(--gold); font: 400 32px/1 "Noto Serif SC", STSong, serif; box-shadow: 0 0 40px rgba(216, 169, 74, 0.1); }
+.compatibility-screen p { margin: 0 0 14px; color: rgba(155, 200, 196, 0.56); font: 8px/1 "IBM Plex Mono", Consolas, monospace; letter-spacing: 0.24em; }
+.compatibility-screen h1 { margin: 0; font: 400 clamp(24px, 5vw, 42px)/1.35 "Noto Serif SC", STSong, serif; letter-spacing: 0.12em; }
+.compatibility-screen span { max-width: 520px; margin-top: 22px; color: rgba(232, 223, 196, 0.62); font-size: 12px; line-height: 1.9; letter-spacing: 0.06em; }
+.compatibility-screen small { margin-top: 12px; color: rgba(216, 169, 74, 0.52); font-size: 9px; letter-spacing: 0.12em; }
 
 @keyframes whisper-signal { 0%, 100% { opacity: 0.24; } 50% { opacity: 0.92; } }
 @keyframes memory-fracture {
@@ -1170,7 +1188,7 @@ button { font: inherit; }
     --edge-y: max(18px, env(safe-area-inset-top));
     --mobile-hud-height: 52px;
   }
-  .experience { height: 100dvh; min-height: 520px; }
+  .experience { height: 100vh; height: 100dvh; min-height: 520px; }
   .hud-frame { inset: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); }
   .chapter-index { display: none; }
   .intro { top: auto; right: max(24px, env(safe-area-inset-right)); bottom: max(38px, calc(env(safe-area-inset-bottom) + 28px)); left: max(24px, env(safe-area-inset-left)); width: auto; transform: none; }

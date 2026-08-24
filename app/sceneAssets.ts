@@ -46,6 +46,11 @@ export const SCENE_ASSETS: SceneAsset[] = [
   { id: "civilization-gate", name: "文明之门", voice: "走过这扇门，记忆就不会停在三千年前，带着这段记忆将其延续吧。", caption: "太阳神鸟是中国文化遗产标志，图案寓意追求光明、团结奋进、和谐包容，成为连接古蜀文明与当代文化的重要符号。", url: "/models/jinsha/15-civilization-gate.glb", distance: 1400, stage: 2, targetSize: 18, position: [0, 10, -1400], rotation: [0, 0, 0], defaultScale: [8, 8, 8] },
 ];
 
-export const createDefaultTransforms = (): Record<string, SceneTransform> => Object.fromEntries(
-  SCENE_ASSETS.map((asset) => [asset.id, { position: [...asset.position] as Vector3Tuple, rotation: [...asset.rotation] as Vector3Tuple, scale: [...asset.defaultScale] as Vector3Tuple }]),
-);
+export const createDefaultTransforms = (): Record<string, SceneTransform> => SCENE_ASSETS.reduce<Record<string, SceneTransform>>((transforms, asset) => {
+  transforms[asset.id] = {
+    position: [...asset.position] as Vector3Tuple,
+    rotation: [...asset.rotation] as Vector3Tuple,
+    scale: [...asset.defaultScale] as Vector3Tuple,
+  };
+  return transforms;
+}, {});

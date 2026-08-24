@@ -26,7 +26,6 @@ const FOG_COLORS = ["#0a1d1c", "#241408", "#170d25"] as const;
 
 const SCENE_TRANSFORMS_KEY = "jinsha-scene-transforms-v2";
 const AUDIO_MIX_KEY = "jinsha-audio-mix-v2";
-const OPTIMIZED_MODEL_IDS = new Set(["cave", "ancient-tree", "landscape-birds", "bronze-pattern", "mask-fragment", "bronze-fragment", "sunbird-fragment", "civilization-gate"]);
 const CAVE_COLLISION_EXCLUSIONS = new Set(["cave"]);
 const FORWARD_COLLISION_EXCLUSIONS = new Set(["cave", "civilization-gate"]);
 const CAMERA_COLLISION_EXCLUSIONS = new Set<string>();
@@ -91,6 +90,7 @@ const PREVIOUS_DEFAULT_POSITIONS: Record<string, Vector3Tuple> = {
   "civilization-gate": [0, 0, -362],
 };
 const dracoLoader = new DRACOLoader().setDecoderPath("/draco/");
+if (typeof WebAssembly !== "object") dracoLoader.setDecoderConfig({ type: "js" });
 const ATMOSPHERE_COLOR_VALUES = ATMOSPHERE_COLORS.map((color) => new THREE.Color(color));
 const FOG_COLOR_VALUES = FOG_COLORS.map((color) => new THREE.Color(color));
 
@@ -105,7 +105,6 @@ function getRecommendedQuality(): Quality {
 }
 
 function getSceneModelUrl(asset: SceneAsset, quality: Quality): string {
-  if (!OPTIMIZED_MODEL_IDS.has(asset.id)) return asset.url;
   const directory = quality === "eco" ? "/models/jinsha-eco/" : "/models/jinsha-optimized/";
   return asset.url.replace("/models/jinsha/", directory);
 }
@@ -1265,7 +1264,7 @@ function Xiyu({ playerRef, controls, started, entering, cruising, quality }: { p
   const idlePhase = useRef(0);
   const cruiseBlend = useRef(1);
   const boostBlend = useRef(0);
-  const gltf = useLoader(GLTFLoader, quality === "eco" ? "/models/xiyu-eco.glb" : "/models/xiyu.glb", (loader) => loader.setDRACOLoader(dracoLoader));
+  const gltf = useLoader(GLTFLoader, quality === "eco" ? "/models/xiyu-eco.glb" : "/models/xiyu-optimized.glb", (loader) => loader.setDRACOLoader(dracoLoader));
   const mixer = useMemo(() => new THREE.AnimationMixer(gltf.scene), [gltf.scene]);
   const animationClip = useMemo(() => {
     const source = gltf.animations[0];
@@ -1706,7 +1705,11 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
     caveRailActive.current = caveLocked;
     if (caveLocked) lateral.current.copy(caveCandidate);
     if (started && !paused && progress.current < ROUTE_LENGTH) {
-      const speed = (prefersReducedMotion ? 3.2 : 5.8) * (1 + forwardBoost.current * 0.82) * forwardMotion.current;
+      // Stopping must lock route progress immediately. The smoothed blend is
+      // kept for the visual restart, but W/S remain vertical-only while stopped.
+      const speed = cruising
+        ? (prefersReducedMotion ? 3.2 : 5.8) * (1 + forwardBoost.current * 0.82) * forwardMotion.current
+        : 0;
       const xAxis = THREE.MathUtils.clamp((input.right ? 1 : 0) - (input.left ? 1 : 0) + input.touchX, -1, 1);
       const yAxis = THREE.MathUtils.clamp((input.up ? 1 : 0) - (input.down ? 1 : 0) + input.touchY, -1, 1);
       caveViewTilt.current.x = THREE.MathUtils.damp(caveViewTilt.current.x, caveLocked ? xAxis : 0, caveLocked ? 5.2 : 3.8, delta);
@@ -2035,7 +2038,7 @@ function JinshaExperienceCore() {
     if (typeof window === "undefined") return defaults;
     try {
       const saved = JSON.parse(window.localStorage.getItem(SCENE_TRANSFORMS_KEY) ?? "{}") as Record<string, SceneTransform>;
-      return Object.fromEntries(Object.entries(defaults).map(([id, transform]) => {
+      return Object.entries(defaults).reduce<Record<string, SceneTransform>>((resolved, [id, transform]) => {
         const persisted = saved[id];
         const rotationMatches = transform.rotation.every((value, index) => persisted?.rotation?.[index] === value);
         const hasOldScale = persisted?.scale?.every((value) => value === 1);
@@ -2043,8 +2046,9 @@ function JinshaExperienceCore() {
         if (id === "cave") knownOldPositions.push([0, -0.4, -24]);
         const hasOldPosition = knownOldPositions.some((position) => position?.every((value, index) => persisted?.position?.[index] === value));
         const untouchedOldTransform = hasOldPosition && rotationMatches && hasOldScale;
-        return [id, !persisted || untouchedOldTransform ? transform : persisted];
-      }));
+        resolved[id] = !persisted || untouchedOldTransform ? transform : persisted;
+        return resolved;
+      }, {});
     } catch {
       return defaults;
     }
@@ -2084,13 +2088,21 @@ function JinshaExperienceCore() {
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
-      window.localStorage.setItem(SCENE_TRANSFORMS_KEY, JSON.stringify(sceneTransforms));
+      try {
+        window.localStorage.setItem(SCENE_TRANSFORMS_KEY, JSON.stringify(sceneTransforms));
+      } catch {
+        // Some embedded and privacy-mode mobile browsers disable storage.
+      }
     }, 120);
     return () => window.clearTimeout(timeout);
   }, [sceneTransforms]);
 
   useEffect(() => {
-    window.localStorage.setItem(AUDIO_MIX_KEY, JSON.stringify(audioMix));
+    try {
+      window.localStorage.setItem(AUDIO_MIX_KEY, JSON.stringify(audioMix));
+    } catch {
+      // Audio controls still work for the current visit without persistence.
+    }
   }, [audioMix]);
 
   const updateAudioMix = useCallback((channel: keyof AudioMix, value: number) => {
@@ -2602,15 +2614,40 @@ function CriticalLoadingScreen({ progress, leaving }: { progress: number; leavin
   </main>;
 }
 
+function CompatibilityScreen() {
+  return <main className="compatibility-screen" role="alert">
+    <div className="compatibility-screen__seal" aria-hidden="true">羽</div>
+    <p>3D EXPERIENCE UNAVAILABLE</p>
+    <h1>当前浏览器无法开启三维场景</h1>
+    <span>请升级浏览器，或使用最新版 Chrome、Safari、Edge 在系统浏览器中打开。</span>
+    <small>需要 WebGL 2 与后台模型解码支持</small>
+  </main>;
+}
+
 export function JinshaExperience() {
   const [criticalProgress, setCriticalProgress] = useState(0);
   const [criticalLeaving, setCriticalLeaving] = useState(false);
   const [criticalReady, setCriticalReady] = useState(false);
   const [coreMounted, setCoreMounted] = useState(false);
+  const [compatibilityIssue, setCompatibilityIssue] = useState(false);
 
   useEffect(() => {
     let active = true;
     THREE.Cache.enabled = true;
+    let graphicsSupported = false;
+    try {
+      const probe = document.createElement("canvas");
+      const context = probe.getContext("webgl2");
+      graphicsSupported = Boolean(context) && typeof Worker === "function";
+      context?.getExtension("WEBGL_lose_context")?.loseContext();
+    } catch {
+      graphicsSupported = false;
+    }
+    if (!graphicsSupported) {
+      setCompatibilityIssue(true);
+      setCriticalReady(true);
+      return () => { active = false; };
+    }
     setCoreMounted(true);
     const progressTimers = [
       window.setTimeout(() => { if (active) setCriticalProgress(28); }, 80),
@@ -2631,7 +2668,11 @@ export function JinshaExperience() {
   }, []);
 
   return <>
-    {coreMounted && <JinshaExperienceCore />}
-    {!criticalReady && <CriticalLoadingScreen progress={criticalProgress} leaving={criticalLeaving} />}
+    {compatibilityIssue
+      ? <CompatibilityScreen />
+      : <>
+        {coreMounted && <JinshaExperienceCore />}
+        {!criticalReady && <CriticalLoadingScreen progress={criticalProgress} leaving={criticalLeaving} />}
+      </>}
   </>;
 }
