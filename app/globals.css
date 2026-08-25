@@ -116,6 +116,9 @@ button { font: inherit; }
 .critical-loading-content > strong { color: rgba(225, 196, 127, 0.86); font: 300 24px/1 "IBM Plex Mono", Consolas, monospace; letter-spacing: 0.08em; }
 .critical-loading-content > strong small { margin-left: 3px; font-size: 9px; }
 .critical-loading-content > span { margin-top: 12px; color: rgba(232, 223, 196, 0.34); font: 9px/1.5 "Noto Serif SC", STSong, serif; letter-spacing: 0.16em; }
+.critical-loading-retry { margin-top: 22px; padding: 10px 24px; border: 1px solid rgba(216, 169, 74, 0.42); background: rgba(8, 18, 19, 0.78); color: #dfc27d; font: 12px/1.2 "Noto Serif SC", STSong, serif; letter-spacing: 0.18em; cursor: pointer; transition: border-color 180ms ease, background 180ms ease, color 180ms ease; }
+.critical-loading-retry:hover, .critical-loading-retry:focus-visible { border-color: rgba(225, 182, 87, 0.86); background: rgba(44, 34, 16, 0.72); color: #f2d99c; outline: none; }
+.critical-loading.has-error .critical-loading-content > span { max-width: 440px; color: rgba(232, 194, 170, 0.72); letter-spacing: 0.08em; }
 .critical-loading.is-leaving { pointer-events: none; animation: critical-screen-out 420ms cubic-bezier(0.55, 0, 0.72, 0.22) both; }
 .critical-loading.is-leaving .critical-loading-depth { animation: critical-depth-out 390ms cubic-bezier(0.55, 0, 0.72, 0.22) both; }
 .critical-loading.is-leaving .critical-loading-content > * { animation: critical-element-out 280ms ease-in both; }

@@ -3,7 +3,7 @@
 import { Canvas, useFrame, useLoader, useThree, type ThreeEvent } from "@react-three/fiber";
 import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
-import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { Component, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
 import * as THREE from "three";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
@@ -17,6 +17,9 @@ type EditorMode = "translate" | "rotate" | "scale";
 type AudioMix = { master: number; background: number; effects: number };
 type SceneMotion = "static" | "float" | "rotate-z-float";
 type CollisionHit = { distance: number; normal: THREE.Vector3; assetId: string };
+type CriticalAssetId = "renderer" | "character" | "cave" | "ancient-tree";
+type CriticalAssetReporter = (id: CriticalAssetId) => void;
+type CriticalAssetErrorReporter = (label: string) => void;
 
 type Controls = { left: boolean; right: boolean; up: boolean; down: boolean; boost: boolean; touchX: number; touchY: number };
 type Telemetry = { progress: number; lateral: [number, number]; stage: number; artifactId: string | null; finished: boolean };
@@ -38,6 +41,7 @@ const CAMERA_MAX_RELEASE_SPEED = 2.6;
 const CAMERA_MAX_COMPRESSION = 1.35;
 const INITIAL_ARTIFACT_REVEAL_PROGRESS = 24;
 const CAVE_TRACK_OFFSET: [number, number] = [-0.65, -0.5];
+const CRITICAL_SCENE_ASSET_IDS = new Set(["cave", "ancient-tree"]);
 const SCENE_MOTIONS: Record<string, SceneMotion> = {
   cave: "static",
   "ancient-tree": "float",
@@ -806,7 +810,7 @@ function disposeModel(root: THREE.Object3D) {
   textures.forEach((texture) => texture.dispose());
 }
 
-function SceneModel({ asset, transform, quality, editing, selected, onSelect, register, registerCollider }: {
+function SceneModel({ asset, transform, quality, editing, selected, onSelect, register, registerCollider, onCriticalAssetReady, onCriticalAssetError }: {
   asset: SceneAsset;
   transform: SceneTransform;
   quality: Quality;
@@ -815,6 +819,8 @@ function SceneModel({ asset, transform, quality, editing, selected, onSelect, re
   onSelect: (id: string) => void;
   register: (id: string, object: THREE.Group | null) => void;
   registerCollider: (id: string, object: THREE.Group | null) => void;
+  onCriticalAssetReady: CriticalAssetReporter;
+  onCriticalAssetError: CriticalAssetErrorReporter;
 }) {
   const group = useRef<THREE.Group>(null);
   const motionGroup = useRef<THREE.Group>(null);
@@ -885,7 +891,11 @@ function SceneModel({ asset, transform, quality, editing, selected, onSelect, re
         animationMixer.current = loadedMixer;
       }
       setModel(loaded);
-    }, undefined, () => { if (!disposed) setFailed(true); });
+    }, undefined, () => {
+      if (disposed) return;
+      setFailed(true);
+      if (CRITICAL_SCENE_ASSET_IDS.has(asset.id)) onCriticalAssetError(asset.name);
+    });
     return () => {
       disposed = true;
       loadedMixer?.stopAllAction();
@@ -893,7 +903,7 @@ function SceneModel({ asset, transform, quality, editing, selected, onSelect, re
       if (animationMixer.current === loadedMixer) animationMixer.current = null;
       if (loaded) disposeModel(loaded);
     };
-  }, [modelUrl]);
+  }, [asset.id, asset.name, modelUrl, onCriticalAssetError]);
 
   useEffect(() => {
     if (editing || asset.id === "cave") {
@@ -946,6 +956,11 @@ function SceneModel({ asset, transform, quality, editing, selected, onSelect, re
     const largestDimension = Math.max(size.x, size.y, size.z, 0.001);
     return { center, scale: asset.targetSize * 1.28 / largestDimension };
   }, [asset.targetSize, model]);
+
+  useEffect(() => {
+    if (!model || !fit || !CRITICAL_SCENE_ASSET_IDS.has(asset.id)) return;
+    onCriticalAssetReady(asset.id as CriticalAssetId);
+  }, [asset.id, fit, model, onCriticalAssetReady]);
 
   useEffect(() => {
     register(asset.id, group.current);
@@ -1089,7 +1104,7 @@ function EditorHeadlight({ enabled }: { enabled: boolean }) {
   return enabled ? <pointLight ref={light} color="#ffe0a0" intensity={115} distance={90} decay={1.45} /> : null;
 }
 
-function SceneAssetField({ progressRef, transforms, quality, editing, selectedId, editorMode, editorLocal, editorUniformScale, onSelect, onTransformChange, onColliderRegister }: {
+function SceneAssetField({ progressRef, transforms, quality, editing, selectedId, editorMode, editorLocal, editorUniformScale, onSelect, onTransformChange, onColliderRegister, onCriticalAssetReady, onCriticalAssetError }: {
   progressRef: RefObject<number>;
   transforms: Record<string, SceneTransform>;
   quality: Quality;
@@ -1101,6 +1116,8 @@ function SceneAssetField({ progressRef, transforms, quality, editing, selectedId
   onSelect: (id: string) => void;
   onTransformChange: (id: string, transform: SceneTransform) => void;
   onColliderRegister: (id: string, object: THREE.Group | null) => void;
+  onCriticalAssetReady: CriticalAssetReporter;
+  onCriticalAssetError: CriticalAssetErrorReporter;
 }) {
   const [streamCenter, setStreamCenter] = useState(0);
   const [assetObjects, setAssetObjects] = useState<Record<string, THREE.Group>>({});
@@ -1131,7 +1148,7 @@ function SceneAssetField({ progressRef, transforms, quality, editing, selectedId
       : quality === "high" ? 145 : 90;
     const initialLeadingDistance = quality === "high" ? 96 : 72;
     return (offset >= -trailingDistance && offset <= leadingDistance)
-      || (streamCenter < 12 && distance < initialLeadingDistance);
+      || (streamCenter < 12 && (distance < initialLeadingDistance || CRITICAL_SCENE_ASSET_IDS.has(asset.id)));
   });
   const target = selectedId ? assetObjects[selectedId] ?? null : null;
   const captureTransform = useCallback((id: string, object: THREE.Object3D) => {
@@ -1153,6 +1170,8 @@ function SceneAssetField({ progressRef, transforms, quality, editing, selectedId
       onSelect={onSelect}
       register={register}
       registerCollider={onColliderRegister}
+      onCriticalAssetReady={onCriticalAssetReady}
+      onCriticalAssetError={onCriticalAssetError}
     />)}
     {!editing && loadedAssets.map((asset) => <ArtifactParticleEffect
       key={`particles-${quality}-${asset.id}`}
@@ -1256,7 +1275,7 @@ function SceneEditorPanel({ selectedId, transforms, mode, local, uniformScale, o
   </aside>;
 }
 
-function Xiyu({ playerRef, controls, started, entering, cruising, quality }: { playerRef: RefObject<THREE.Group | null>; controls: RefObject<Controls>; started: boolean; entering: boolean; cruising: boolean; quality: Quality }) {
+function Xiyu({ playerRef, controls, started, entering, cruising, quality, onCriticalAssetReady }: { playerRef: RefObject<THREE.Group | null>; controls: RefObject<Controls>; started: boolean; entering: boolean; cruising: boolean; quality: Quality; onCriticalAssetReady: CriticalAssetReporter }) {
   const halo = useRef<THREE.Group>(null);
   const characterScale = useRef<THREE.Group>(null);
   const modelMotion = useRef<THREE.Group>(null);
@@ -1323,7 +1342,8 @@ function Xiyu({ playerRef, controls, started, entering, cruising, quality }: { p
         }
       });
     });
-  }, [gltf.scene]);
+    onCriticalAssetReady("character");
+  }, [gltf.scene, onCriticalAssetReady]);
 
   useFrame(({ size }, delta) => {
     const cruiseTarget = started && cruising ? 1 : 0;
@@ -1410,7 +1430,7 @@ function Xiyu({ playerRef, controls, started, entering, cruising, quality }: { p
   );
 }
 
-function FlightScene({ started, entering, paused, cruising, quality, controls, resetKey, transforms, editing, selectedId, editorMode, editorLocal, editorUniformScale, onSelect, onTransformChange, onTelemetry }: {
+function FlightScene({ started, entering, paused, cruising, quality, controls, resetKey, transforms, editing, selectedId, editorMode, editorLocal, editorUniformScale, onSelect, onTransformChange, onTelemetry, onCriticalAssetReady, onCriticalAssetError }: {
   started: boolean;
   entering: boolean;
   paused: boolean;
@@ -1427,6 +1447,8 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
   onSelect: (id: string) => void;
   onTransformChange: (id: string, transform: SceneTransform) => void;
   onTelemetry: (telemetry: Telemetry) => void;
+  onCriticalAssetReady: CriticalAssetReporter;
+  onCriticalAssetError: CriticalAssetErrorReporter;
 }) {
   const { gl } = useThree();
   const world = useRef<THREE.Group>(null);
@@ -1986,13 +2008,15 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
           onSelect={onSelect}
           onTransformChange={onTransformChange}
           onColliderRegister={registerCollider}
+          onCriticalAssetReady={onCriticalAssetReady}
+          onCriticalAssetError={onCriticalAssetError}
         />
         <LightDust quality={quality} />
       </group>
       {!editing && <>
         <SpeedLines quality={quality} controls={controls} cruising={cruising} />
         <Suspense fallback={null}>
-          <Xiyu playerRef={player} controls={controls} started={started} entering={entering} cruising={cruising} quality={quality} />
+          <Xiyu playerRef={player} controls={controls} started={started} entering={entering} cruising={cruising} quality={quality} onCriticalAssetReady={onCriticalAssetReady} />
         </Suspense>
         <FireflyTrail playerRef={player} quality={quality} active={started && cruising && !paused} />
       </>}
@@ -2000,7 +2024,24 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
   );
 }
 
-function JinshaExperienceCore() {
+class CoreAssetBoundary extends Component<{ children: ReactNode; onError: CriticalAssetErrorReporter }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    const message = error instanceof Error && error.message ? error.message : "未知资源";
+    this.props.onError(message);
+  }
+
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}
+
+function JinshaExperienceCore({ onCriticalAssetReady, onCriticalAssetError }: { onCriticalAssetReady: CriticalAssetReporter; onCriticalAssetError: CriticalAssetErrorReporter }) {
   const experienceRef = useRef<HTMLElement>(null);
   const [entered, setEntered] = useState(false);
   const [entering, setEntering] = useState(false);
@@ -2444,26 +2485,30 @@ function JinshaExperienceCore() {
   return (
     <main ref={experienceRef} className={`experience quality-${quality} stage-${telemetry.stage + 1} ${entered ? "is-running" : "is-intro"} ${entering ? "is-entering" : ""} ${editing ? "is-editing" : ""} ${boosting && cruising && entered && !paused && !editing ? "is-boosting" : ""} ${!cruising && entered ? "is-stopped" : ""}`}>
       <div className="scene" aria-label="羽见千年三维体验场景">
-        <Canvas camera={{ position: [0, 2.6, 11], fov: 58, near: 0.02, far: 520 }} dpr={renderQuality === "high" ? [0.9, 1.35] : [0.6, 0.85]} gl={{ antialias: quality === "high", alpha: false, stencil: false, powerPreference: "high-performance" }}>
-          <FlightScene
-            started={entered}
-            entering={entering}
-            paused={paused || telemetry.finished || editing}
-            cruising={cruising}
-            quality={renderQuality}
-            controls={controls}
-            resetKey={resetKey}
-            transforms={sceneTransforms}
-            editing={editing}
-            selectedId={selectedAssetId}
-            editorMode={editorMode}
-            editorLocal={editorLocal}
-            editorUniformScale={editorUniformScale}
-            onSelect={setSelectedAssetId}
-            onTransformChange={updateSceneTransform}
-            onTelemetry={reportTelemetry}
-          />
-        </Canvas>
+        <CoreAssetBoundary onError={onCriticalAssetError}>
+          <Canvas camera={{ position: [0, 2.6, 11], fov: 58, near: 0.02, far: 520 }} dpr={renderQuality === "high" ? [0.9, 1.35] : [0.6, 0.85]} gl={{ antialias: quality === "high", alpha: false, stencil: false, powerPreference: "high-performance" }} onCreated={() => onCriticalAssetReady("renderer")}>
+            <FlightScene
+              started={entered}
+              entering={entering}
+              paused={paused || telemetry.finished || editing}
+              cruising={cruising}
+              quality={renderQuality}
+              controls={controls}
+              resetKey={resetKey}
+              transforms={sceneTransforms}
+              editing={editing}
+              selectedId={selectedAssetId}
+              editorMode={editorMode}
+              editorLocal={editorLocal}
+              editorUniformScale={editorUniformScale}
+              onSelect={setSelectedAssetId}
+              onTransformChange={updateSceneTransform}
+              onTelemetry={reportTelemetry}
+              onCriticalAssetReady={onCriticalAssetReady}
+              onCriticalAssetError={onCriticalAssetError}
+            />
+          </Canvas>
+        </CoreAssetBoundary>
       </div>
 
       <div className="journey-transition" aria-hidden="true">
@@ -2598,8 +2643,8 @@ function JinshaExperienceCore() {
   );
 }
 
-function CriticalLoadingScreen({ progress, leaving }: { progress: number; leaving: boolean }) {
-  return <main className={`critical-loading ${leaving ? "is-leaving" : ""}`} role="status" aria-live="polite" aria-label={`核心场景载入中，${progress}%`}>
+function CriticalLoadingScreen({ progress, leaving, status, error, onRetry }: { progress: number; leaving: boolean; status: string; error: string | null; onRetry: () => void }) {
+  return <main className={`critical-loading ${leaving ? "is-leaving" : ""} ${error ? "has-error" : ""}`} role={error ? "alert" : "status"} aria-live="polite" aria-label={error ? "核心场景载入失败" : `核心场景载入中，${progress}%`}>
     <div className="critical-loading-depth" aria-hidden="true"><i /><i /><i /></div>
     <section className="critical-loading-content">
       <div className="critical-loading-seal" aria-hidden="true"><i /><span>羽</span></div>
@@ -2609,7 +2654,8 @@ function CriticalLoadingScreen({ progress, leaving }: { progress: number; leavin
         {Array.from({ length: 5 }, (_, index) => <i key={index} className={progress >= (index + 1) * 20 ? "is-loaded" : ""} />)}
       </div>
       <strong>{String(progress).padStart(2, "0")}<small>%</small></strong>
-      <span>沉浸场景准备中</span>
+      <span>{status}</span>
+      {error && <button type="button" className="critical-loading-retry" onClick={onRetry}>重新加载</button>}
     </section>
   </main>;
 }
@@ -2625,14 +2671,46 @@ function CompatibilityScreen() {
 }
 
 export function JinshaExperience() {
-  const [criticalProgress, setCriticalProgress] = useState(0);
   const [criticalLeaving, setCriticalLeaving] = useState(false);
   const [criticalReady, setCriticalReady] = useState(false);
+  const [criticalFrameReady, setCriticalFrameReady] = useState(false);
+  const [criticalError, setCriticalError] = useState<string | null>(null);
+  const [criticalAssets, setCriticalAssets] = useState<Record<CriticalAssetId, boolean>>({
+    renderer: false,
+    character: false,
+    cave: false,
+    "ancient-tree": false,
+  });
   const [coreMounted, setCoreMounted] = useState(false);
   const [compatibilityIssue, setCompatibilityIssue] = useState(false);
 
+  const reportCriticalAssetReady = useCallback<CriticalAssetReporter>((id) => {
+    setCriticalAssets((current) => current[id] ? current : { ...current, [id]: true });
+  }, []);
+  const reportCriticalAssetError = useCallback<CriticalAssetErrorReporter>((label) => {
+    setCriticalError(`核心资源“${label}”加载失败，请检查网络后重试。`);
+  }, []);
+  const allCriticalAssetsReady = Object.values(criticalAssets).every(Boolean);
+  const criticalProgress = Math.min(100,
+    (coreMounted ? 5 : 0)
+    + (criticalAssets.renderer ? 10 : 0)
+    + (criticalAssets.character ? 30 : 0)
+    + (criticalAssets.cave ? 30 : 0)
+    + (criticalAssets["ancient-tree"] ? 20 : 0)
+    + (criticalFrameReady ? 5 : 0));
+  const criticalStatus = criticalError
+    ? criticalError
+    : !criticalAssets.renderer
+      ? "正在初始化三维渲染器"
+      : !criticalAssets.character
+        ? "正在下载并解码首页人物"
+        : !criticalAssets.cave
+          ? "正在构筑岩层秘境"
+          : !criticalAssets["ancient-tree"]
+            ? "正在预载前方场景"
+            : "正在确认首帧画面";
+
   useEffect(() => {
-    let active = true;
     THREE.Cache.enabled = true;
     let graphicsSupported = false;
     try {
@@ -2646,33 +2724,44 @@ export function JinshaExperience() {
     if (!graphicsSupported) {
       setCompatibilityIssue(true);
       setCriticalReady(true);
-      return () => { active = false; };
+      return;
     }
     setCoreMounted(true);
-    const progressTimers = [
-      window.setTimeout(() => { if (active) setCriticalProgress(28); }, 80),
-      window.setTimeout(() => { if (active) setCriticalProgress(56); }, 190),
-      window.setTimeout(() => { if (active) setCriticalProgress(82); }, 340),
-      window.setTimeout(() => {
-        if (!active) return;
-        setCriticalProgress(100);
-        setCriticalLeaving(true);
-      }, 520),
-      window.setTimeout(() => { if (active) setCriticalReady(true); }, 940),
-    ];
-
-    return () => {
-      active = false;
-      progressTimers.forEach((timer) => window.clearTimeout(timer));
-    };
   }, []);
+
+  useEffect(() => {
+    if (!coreMounted || allCriticalAssetsReady || criticalReady) return;
+    const timeout = window.setTimeout(() => {
+      setCriticalError("核心场景加载时间过长，请检查网络后重试。");
+    }, 60000);
+    return () => window.clearTimeout(timeout);
+  }, [allCriticalAssetsReady, coreMounted, criticalReady]);
+
+  useEffect(() => {
+    if (!allCriticalAssetsReady || criticalReady) return;
+    setCriticalError(null);
+    let secondFrame = 0;
+    let exitTimer = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        setCriticalFrameReady(true);
+        setCriticalLeaving(true);
+        exitTimer = window.setTimeout(() => setCriticalReady(true), 440);
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      if (secondFrame) window.cancelAnimationFrame(secondFrame);
+      if (exitTimer) window.clearTimeout(exitTimer);
+    };
+  }, [allCriticalAssetsReady, criticalReady]);
 
   return <>
     {compatibilityIssue
       ? <CompatibilityScreen />
       : <>
-        {coreMounted && <JinshaExperienceCore />}
-        {!criticalReady && <CriticalLoadingScreen progress={criticalProgress} leaving={criticalLeaving} />}
+        {coreMounted && <JinshaExperienceCore onCriticalAssetReady={reportCriticalAssetReady} onCriticalAssetError={reportCriticalAssetError} />}
+        {!criticalReady && <CriticalLoadingScreen progress={criticalProgress} leaving={criticalLeaving} status={criticalStatus} error={criticalError} onRetry={() => window.location.reload()} />}
       </>}
   </>;
 }
