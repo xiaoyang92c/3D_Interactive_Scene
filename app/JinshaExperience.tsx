@@ -41,6 +41,11 @@ const CAMERA_MAX_APPROACH_SPEED = 4.2;
 const CAMERA_MAX_RELEASE_SPEED = 2.6;
 const CAMERA_MAX_COMPRESSION = 1.35;
 const INITIAL_ARTIFACT_REVEAL_PROGRESS = 24;
+const ARTIFACT_REVEAL_DISTANCE_OVERRIDES: Record<string, number> = {
+  sunbird: 126,
+  "golden-mask": 134,
+  "jade-bi": 126,
+};
 const CAVE_TRACK_OFFSET: [number, number] = [-0.65, -0.5];
 const CRITICAL_SCENE_ASSET_IDS = new Set(["cave"]);
 const INITIAL_PREFETCH_SCENE_ASSET_IDS = new Set(["ancient-tree", "landscape-birds", "stage-two-gate"]);
@@ -2089,24 +2094,32 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
     if (state.clock.elapsedTime - lastReport.current > 0.12) {
       const current = progress.current;
       const stage = current < STAGES[0].range[1] ? 0 : current < STAGES[1].range[1] ? 1 : 2;
-      let nearest: SceneAsset | null = null;
-      let nearestDistance = Infinity;
-      let nearestTriggerDistance = 42;
+      let approaching: SceneAsset | null = null;
+      let approachingDistance = Infinity;
+      let recentlyPassed: SceneAsset | null = null;
+      let recentlyPassedDistance = Infinity;
       SCENE_ASSETS.forEach((asset) => {
         if (!asset.voice.trim() || !asset.caption.trim()) return;
         if (asset.id === "cave" && current < INITIAL_ARTIFACT_REVEAL_PROGRESS) return;
-        const distance = Math.abs(-transforms[asset.id].position[2] - current);
-        if (distance < nearestDistance) {
-          const modelScale = Math.max(...transforms[asset.id].scale.map((value) => Math.abs(value)));
-          nearest = asset;
-          nearestDistance = distance;
-          nearestTriggerDistance = THREE.MathUtils.clamp(30 + asset.targetSize * modelScale * 0.38, 44, 78);
+        const signedDistance = -transforms[asset.id].position[2] - current;
+        const modelScale = Math.max(...transforms[asset.id].scale.map((value) => Math.abs(value)));
+        const scaledRevealDistance = THREE.MathUtils.clamp(48 + asset.targetSize * modelScale * 0.5, 68, 108);
+        const revealDistance = ARTIFACT_REVEAL_DISTANCE_OVERRIDES[asset.id] ?? scaledRevealDistance;
+        if (signedDistance >= 0 && signedDistance <= revealDistance && signedDistance < approachingDistance) {
+          approaching = asset;
+          approachingDistance = signedDistance;
+          return;
+        }
+        const passedDistance = Math.abs(signedDistance);
+        if (signedDistance < 0 && passedDistance <= 28 && passedDistance < recentlyPassedDistance) {
+          recentlyPassed = asset;
+          recentlyPassedDistance = passedDistance;
         }
       });
       const initialCave = SCENE_ASSETS.find((asset) => asset.id === "cave");
       const artifactId = current >= INITIAL_ARTIFACT_REVEAL_PROGRESS && current < 44 && initialCave?.voice.trim() && initialCave.caption.trim()
         ? initialCave.id
-        : nearestDistance < nearestTriggerDistance ? (nearest as SceneAsset | null)?.id ?? null : null;
+        : approaching?.id ?? recentlyPassed?.id ?? null;
       onTelemetry({ progress: current, lateral: [lateral.current.x, lateral.current.y], stage, artifactId, finished: current >= ROUTE_LENGTH - 0.01 });
       lastReport.current = state.clock.elapsedTime;
     }
@@ -2854,6 +2867,8 @@ export function JinshaExperience() {
   const criticalProgress = Math.round(criticalDisplayProgress);
   const criticalStatus = criticalError
     ? criticalError
+    : criticalFrameReady
+      ? "核心场景已就绪"
     : criticalSlow
       ? "网络较慢，核心场景仍在继续加载"
     : !criticalAssets.renderer
@@ -2895,15 +2910,23 @@ export function JinshaExperience() {
     if (criticalReady) return;
     const interval = window.setInterval(() => {
       setCriticalDisplayProgress((current) => {
-        if (criticalFrameReady) return 100;
+        if (criticalFrameReady) {
+          const remaining = 100 - current;
+          if (remaining <= 0.06) return 100;
+          return Math.min(100, current + Math.max(0.08, remaining * 0.17));
+        }
         if (current < measuredCriticalProgress) {
           const distance = measuredCriticalProgress - current;
-          return Math.min(measuredCriticalProgress, current + Math.max(0.28, distance * 0.16));
+          const minimumStep = current < 55 ? 0.72 : current < 80 ? 0.36 : 0.14;
+          return Math.min(measuredCriticalProgress, current + Math.max(minimumStep, distance * 0.22));
         }
-        if (coreMounted && !criticalError) return Math.min(94, current + 0.18);
+        if (coreMounted && !criticalError) {
+          const idleStep = current < 55 ? 0.62 : current < 80 ? 0.3 : 0.1;
+          return Math.min(94, current + idleStep);
+        }
         return current;
       });
-    }, 180);
+    }, 120);
     return () => window.clearInterval(interval);
   }, [coreMounted, criticalError, criticalFrameReady, criticalReady, measuredCriticalProgress]);
 
@@ -2912,21 +2935,27 @@ export function JinshaExperience() {
     setCriticalError(null);
     setCriticalSlow(false);
     let secondFrame = 0;
-    let exitTimer = 0;
     const firstFrame = window.requestAnimationFrame(() => {
       secondFrame = window.requestAnimationFrame(() => {
         setCriticalFrameReady(true);
-        setCriticalDisplayProgress(100);
-        setCriticalLeaving(true);
-        exitTimer = window.setTimeout(() => setCriticalReady(true), 440);
       });
     });
     return () => {
       window.cancelAnimationFrame(firstFrame);
       if (secondFrame) window.cancelAnimationFrame(secondFrame);
-      if (exitTimer) window.clearTimeout(exitTimer);
     };
   }, [allCriticalAssetsReady, criticalReady]);
+
+  useEffect(() => {
+    if (!criticalFrameReady || criticalDisplayProgress < 99.5 || criticalReady) return;
+    setCriticalDisplayProgress(100);
+    const leaveTimer = window.setTimeout(() => setCriticalLeaving(true), 320);
+    const readyTimer = window.setTimeout(() => setCriticalReady(true), 760);
+    return () => {
+      window.clearTimeout(leaveTimer);
+      window.clearTimeout(readyTimer);
+    };
+  }, [criticalDisplayProgress, criticalFrameReady, criticalReady]);
 
   return <>
     {compatibilityIssue
