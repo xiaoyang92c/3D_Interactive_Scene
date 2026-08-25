@@ -17,7 +17,7 @@ type EditorMode = "translate" | "rotate" | "scale";
 type AudioMix = { master: number; background: number; effects: number };
 type SceneMotion = "static" | "float" | "rotate-z-float";
 type CollisionHit = { distance: number; normal: THREE.Vector3; assetId: string };
-type CriticalAssetId = "renderer" | "character" | "cave" | "ancient-tree";
+type CriticalAssetId = "renderer" | "character" | "cave";
 type CriticalAssetReporter = (id: CriticalAssetId) => void;
 type CriticalAssetErrorReporter = (label: string) => void;
 
@@ -41,7 +41,8 @@ const CAMERA_MAX_RELEASE_SPEED = 2.6;
 const CAMERA_MAX_COMPRESSION = 1.35;
 const INITIAL_ARTIFACT_REVEAL_PROGRESS = 24;
 const CAVE_TRACK_OFFSET: [number, number] = [-0.65, -0.5];
-const CRITICAL_SCENE_ASSET_IDS = new Set(["cave", "ancient-tree"]);
+const CRITICAL_SCENE_ASSET_IDS = new Set(["cave"]);
+const INITIAL_PREFETCH_SCENE_ASSET_IDS = new Set(["ancient-tree", "landscape-birds", "stage-two-gate"]);
 const SCENE_MOTIONS: Record<string, SceneMotion> = {
   cave: "static",
   "ancient-tree": "float",
@@ -120,6 +121,9 @@ const SPATIAL_SOUND_SOURCES = [
 
 function useAmbientSound(masterVolume: number, backgroundVolume: number) {
   const player = useRef<HTMLAudioElement | null>(null);
+  const context = useRef<AudioContext | null>(null);
+  const source = useRef<MediaElementAudioSourceNode | null>(null);
+  const gain = useRef<GainNode | null>(null);
   const [muted, setMuted] = useState(false);
 
   const start = useCallback(() => {
@@ -128,26 +132,41 @@ function useAmbientSound(masterVolume: number, backgroundVolume: number) {
       const track = new Audio("/audio/jinsha-stone-passage.mp3");
       track.loop = true;
       track.preload = "auto";
-      track.volume = THREE.MathUtils.clamp(0.78 * masterVolume * backgroundVolume, 0, 1);
+      track.volume = 1;
       player.current = track;
+      const AudioContextConstructor = window.AudioContext
+        ?? (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (AudioContextConstructor) {
+        const audioContext = new AudioContextConstructor();
+        const mediaSource = audioContext.createMediaElementSource(track);
+        const volumeGain = audioContext.createGain();
+        volumeGain.gain.value = muted ? 0 : THREE.MathUtils.clamp(0.78 * masterVolume * backgroundVolume, 0, 1);
+        mediaSource.connect(volumeGain).connect(audioContext.destination);
+        context.current = audioContext;
+        source.current = mediaSource;
+        gain.current = volumeGain;
+      }
     }
-    player.current.muted = muted;
+    if (context.current?.state === "suspended") void context.current.resume();
+    player.current.muted = gain.current ? false : muted;
+    if (!gain.current) player.current.volume = THREE.MathUtils.clamp(0.78 * masterVolume * backgroundVolume, 0, 1);
     void player.current.play().catch(() => undefined);
   }, [backgroundVolume, masterVolume, muted]);
 
   useEffect(() => {
-    if (player.current) player.current.volume = THREE.MathUtils.clamp(0.78 * masterVolume * backgroundVolume, 0, 1);
-  }, [backgroundVolume, masterVolume]);
+    const targetVolume = muted ? 0 : THREE.MathUtils.clamp(0.78 * masterVolume * backgroundVolume, 0, 1);
+    if (gain.current && context.current) {
+      const now = context.current.currentTime;
+      gain.current.gain.cancelScheduledValues(now);
+      gain.current.gain.setTargetAtTime(targetVolume, now, 0.035);
+    } else if (player.current) {
+      player.current.muted = muted;
+      player.current.volume = targetVolume;
+    }
+  }, [backgroundVolume, masterVolume, muted]);
 
   const toggle = useCallback(() => {
-    setMuted((previous) => {
-      const next = !previous;
-      if (player.current) {
-        player.current.muted = next;
-        if (!next) void player.current.play().catch(() => undefined);
-      }
-      return next;
-    });
+    setMuted((previous) => !previous);
   }, []);
 
   useEffect(() => () => {
@@ -156,6 +175,12 @@ function useAmbientSound(masterVolume: number, backgroundVolume: number) {
       player.current.src = "";
       player.current = null;
     }
+    source.current?.disconnect();
+    gain.current?.disconnect();
+    source.current = null;
+    gain.current = null;
+    if (context.current) void context.current.close();
+    context.current = null;
   }, []);
 
   return { muted, start, toggle };
@@ -163,54 +188,67 @@ function useAmbientSound(masterVolume: number, backgroundVolume: number) {
 
 function useBoostSound(active: boolean, muted: boolean, effectsVolume: number) {
   const player = useRef<HTMLAudioElement | null>(null);
-  const fadeFrame = useRef<number | null>(null);
+  const context = useRef<AudioContext | null>(null);
+  const source = useRef<MediaElementAudioSourceNode | null>(null);
+  const gain = useRef<GainNode | null>(null);
 
   useEffect(() => {
     const track = new Audio("/audio/boost-wind.mp3");
     track.loop = true;
     track.preload = "none";
-    track.volume = 0;
+    track.volume = 1;
     player.current = track;
     return () => {
-      if (fadeFrame.current !== null) cancelAnimationFrame(fadeFrame.current);
       track.pause();
       track.src = "";
       player.current = null;
+      source.current?.disconnect();
+      gain.current?.disconnect();
+      source.current = null;
+      gain.current = null;
+      if (context.current) void context.current.close();
+      context.current = null;
     };
   }, []);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
+  const start = useCallback(() => {
     const track = player.current;
     if (!track) return;
-    if (fadeFrame.current !== null) cancelAnimationFrame(fadeFrame.current);
+    if (!context.current) {
+      const AudioContextConstructor = window.AudioContext
+        ?? (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (AudioContextConstructor) {
+        const audioContext = new AudioContextConstructor();
+        const mediaSource = audioContext.createMediaElementSource(track);
+        const volumeGain = audioContext.createGain();
+        volumeGain.gain.value = 0;
+        mediaSource.connect(volumeGain).connect(audioContext.destination);
+        context.current = audioContext;
+        source.current = mediaSource;
+        gain.current = volumeGain;
+      }
+    }
+    if (context.current?.state === "suspended") void context.current.resume();
+    track.muted = false;
+    void track.play().catch(() => undefined);
+  }, []);
 
+  useEffect(() => {
+    const track = player.current;
+    if (!track) return;
     const audible = active && !muted;
     const targetVolume = audible ? THREE.MathUtils.clamp(0.64 * effectsVolume, 0, 1) : 0;
-    const startVolume = track.volume;
-    const duration = targetVolume > startVolume ? 1500 : 1750;
-    const startedAt = performance.now();
-    if (audible) void track.play().catch(() => undefined);
-
-    const fade = (now: number) => {
-      const elapsed = THREE.MathUtils.clamp((now - startedAt) / duration, 0, 1);
-      const eased = elapsed * elapsed * (3 - 2 * elapsed);
-      track.volume = THREE.MathUtils.lerp(startVolume, targetVolume, eased);
-      if (elapsed < 1) {
-        fadeFrame.current = requestAnimationFrame(fade);
-        return;
-      }
-      fadeFrame.current = null;
-      if (!audible) track.pause();
-    };
-    fadeFrame.current = requestAnimationFrame(fade);
-    return () => {
-      if (fadeFrame.current !== null) {
-        cancelAnimationFrame(fadeFrame.current);
-        fadeFrame.current = null;
-      }
-    };
+    if (gain.current && context.current) {
+      const now = context.current.currentTime;
+      gain.current.gain.cancelScheduledValues(now);
+      gain.current.gain.setTargetAtTime(targetVolume, now, targetVolume > gain.current.gain.value ? 0.22 : 0.3);
+    } else {
+      track.muted = muted;
+      track.volume = targetVolume;
+    }
   }, [active, effectsVolume, muted]);
+
+  return start;
 }
 
 function useSceneSpatialSounds({ progress, lateral, transforms, active, muted, effectsVolume }: {
@@ -222,7 +260,8 @@ function useSceneSpatialSounds({ progress, lateral, transforms, active, muted, e
   effectsVolume: number;
 }) {
   const context = useRef<AudioContext | null>(null);
-  const nodes = useRef<Record<string, { track: HTMLAudioElement; filter: BiquadFilterNode; gain: GainNode }>>({});
+  const nodes = useRef<Record<string, { source: AudioBufferSourceNode | null; filter: BiquadFilterNode; gain: GainNode; loading: boolean }>>({});
+  const abortControllers = useRef<AbortController[]>([]);
 
   const start = useCallback(() => {
     if (typeof window === "undefined") return;
@@ -232,26 +271,20 @@ function useSceneSpatialSounds({ progress, lateral, transforms, active, muted, e
       if (!AudioContextConstructor) return;
       const audioContext = new AudioContextConstructor();
       context.current = audioContext;
-      for (const source of SPATIAL_SOUND_SOURCES) {
-        const track = new Audio(source.url);
-        track.loop = true;
-        track.preload = "auto";
-        track.volume = 1;
-        const media = audioContext.createMediaElementSource(track);
+      for (const sound of SPATIAL_SOUND_SOURCES) {
         const filter = audioContext.createBiquadFilter();
         const gain = audioContext.createGain();
         filter.type = "lowpass";
         filter.frequency.value = 720;
         filter.Q.value = 0.42;
         gain.gain.value = 0;
-        media.connect(filter).connect(gain).connect(audioContext.destination);
-        nodes.current[source.assetId] = { track, filter, gain };
+        filter.connect(gain).connect(audioContext.destination);
+        nodes.current[sound.assetId] = { source: null, filter, gain, loading: false };
       }
     }
     const audioContext = context.current;
     if (!audioContext) return;
     void audioContext.resume();
-    Object.values(nodes.current).forEach(({ track }) => { void track.play().catch(() => undefined); });
   }, []);
 
   useEffect(() => {
@@ -269,6 +302,28 @@ function useSceneSpatialSounds({ progress, lateral, transforms, active, muted, e
       );
       const proximity = 1 - THREE.MathUtils.smoothstep(distance, source.near, source.far);
       const presence = proximity * proximity * (3 - 2 * proximity);
+      if (active && proximity > 0.015 && !node.source && !node.loading) {
+        node.loading = true;
+        const controller = new AbortController();
+        abortControllers.current.push(controller);
+        void fetch(source.url, { signal: controller.signal })
+          .then((response) => {
+            if (!response.ok) throw new Error(`Audio request failed: ${response.status}`);
+            return response.arrayBuffer();
+          })
+          .then((buffer) => audioContext.decodeAudioData(buffer))
+          .then((buffer) => {
+            if (context.current !== audioContext) return;
+            const bufferSource = audioContext.createBufferSource();
+            bufferSource.buffer = buffer;
+            bufferSource.loop = true;
+            bufferSource.connect(node.filter);
+            bufferSource.start();
+            node.source = bufferSource;
+          })
+          .catch(() => undefined)
+          .finally(() => { node.loading = false; });
+      }
       const targetVolume = active && !muted ? presence * source.volume * effectsVolume : 0;
       const targetCutoff = THREE.MathUtils.lerp(720, 17800, Math.pow(proximity, 0.72));
       node.gain.gain.cancelScheduledValues(now);
@@ -279,9 +334,13 @@ function useSceneSpatialSounds({ progress, lateral, transforms, active, muted, e
   }, [active, effectsVolume, lateral, muted, progress, transforms]);
 
   useEffect(() => () => {
-    Object.values(nodes.current).forEach(({ track }) => {
-      track.pause();
-      track.src = "";
+    abortControllers.current.forEach((controller) => controller.abort());
+    abortControllers.current = [];
+    Object.values(nodes.current).forEach((node) => {
+      try { node.source?.stop(); } catch { /* Source may already be stopped. */ }
+      node.source?.disconnect();
+      node.filter.disconnect();
+      node.gain.disconnect();
     });
     nodes.current = {};
     if (context.current) void context.current.close();
@@ -1104,7 +1163,7 @@ function EditorHeadlight({ enabled }: { enabled: boolean }) {
   return enabled ? <pointLight ref={light} color="#ffe0a0" intensity={115} distance={90} decay={1.45} /> : null;
 }
 
-function SceneAssetField({ progressRef, transforms, quality, editing, selectedId, editorMode, editorLocal, editorUniformScale, onSelect, onTransformChange, onColliderRegister, onCriticalAssetReady, onCriticalAssetError }: {
+function SceneAssetField({ progressRef, transforms, quality, editing, selectedId, editorMode, editorLocal, editorUniformScale, initialPrefetchEnabled, onSelect, onTransformChange, onColliderRegister, onCriticalAssetReady, onCriticalAssetError }: {
   progressRef: RefObject<number>;
   transforms: Record<string, SceneTransform>;
   quality: Quality;
@@ -1113,6 +1172,7 @@ function SceneAssetField({ progressRef, transforms, quality, editing, selectedId
   editorMode: EditorMode;
   editorLocal: boolean;
   editorUniformScale: boolean;
+  initialPrefetchEnabled: boolean;
   onSelect: (id: string) => void;
   onTransformChange: (id: string, transform: SceneTransform) => void;
   onColliderRegister: (id: string, object: THREE.Group | null) => void;
@@ -1141,13 +1201,19 @@ function SceneAssetField({ progressRef, transforms, quality, editing, selectedId
     const offset = distance - streamCenter;
     const editorCenter = selectedId ? -transforms[selectedId].position[2] : streamCenter;
     if (editing) return Math.abs(distance - editorCenter) <= 175;
-    const trailingDistance = quality === "high" ? 100 : 65;
+    const trailingDistance = quality === "high" ? 105 : 70;
     const caveStreamingWindow = streamCenter < 125;
-    const leadingDistance = caveStreamingWindow
-      ? quality === "high" ? 95 : 66
-      : quality === "high" ? 145 : 90;
     const initialLeadingDistance = quality === "high" ? 96 : 72;
+    const leadingDistance = !initialPrefetchEnabled && streamCenter < 12
+      ? initialLeadingDistance
+      : caveStreamingWindow
+        ? quality === "high" ? 210 : 220
+        : quality === "high" ? 220 : 210;
+    const keepInitialPrefetch = initialPrefetchEnabled
+      && INITIAL_PREFETCH_SCENE_ASSET_IDS.has(asset.id)
+      && offset >= -trailingDistance;
     return (offset >= -trailingDistance && offset <= leadingDistance)
+      || keepInitialPrefetch
       || (streamCenter < 12 && (distance < initialLeadingDistance || CRITICAL_SCENE_ASSET_IDS.has(asset.id)));
   });
   const target = selectedId ? assetObjects[selectedId] ?? null : null;
@@ -1430,7 +1496,7 @@ function Xiyu({ playerRef, controls, started, entering, cruising, quality, onCri
   );
 }
 
-function FlightScene({ started, entering, paused, cruising, quality, controls, resetKey, transforms, editing, selectedId, editorMode, editorLocal, editorUniformScale, onSelect, onTransformChange, onTelemetry, onCriticalAssetReady, onCriticalAssetError }: {
+function FlightScene({ started, entering, paused, cruising, quality, controls, resetKey, transforms, editing, selectedId, editorMode, editorLocal, editorUniformScale, initialPrefetchEnabled, onSelect, onTransformChange, onTelemetry, onCriticalAssetReady, onCriticalAssetError }: {
   started: boolean;
   entering: boolean;
   paused: boolean;
@@ -1444,6 +1510,7 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
   editorMode: EditorMode;
   editorLocal: boolean;
   editorUniformScale: boolean;
+  initialPrefetchEnabled: boolean;
   onSelect: (id: string) => void;
   onTransformChange: (id: string, transform: SceneTransform) => void;
   onTelemetry: (telemetry: Telemetry) => void;
@@ -2005,6 +2072,7 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
           editorMode={editorMode}
           editorLocal={editorLocal}
           editorUniformScale={editorUniformScale}
+          initialPrefetchEnabled={initialPrefetchEnabled}
           onSelect={onSelect}
           onTransformChange={onTransformChange}
           onColliderRegister={registerCollider}
@@ -2041,7 +2109,7 @@ class CoreAssetBoundary extends Component<{ children: ReactNode; onError: Critic
   }
 }
 
-function JinshaExperienceCore({ onCriticalAssetReady, onCriticalAssetError }: { onCriticalAssetReady: CriticalAssetReporter; onCriticalAssetError: CriticalAssetErrorReporter }) {
+function JinshaExperienceCore({ initialPrefetchEnabled, onCriticalAssetReady, onCriticalAssetError }: { initialPrefetchEnabled: boolean; onCriticalAssetReady: CriticalAssetReporter; onCriticalAssetError: CriticalAssetErrorReporter }) {
   const experienceRef = useRef<HTMLElement>(null);
   const [entered, setEntered] = useState(false);
   const [entering, setEntering] = useState(false);
@@ -2098,7 +2166,7 @@ function JinshaExperienceCore({ onCriticalAssetReady, onCriticalAssetError }: { 
   const touchDrag = useRef({ pointerId: -1, startX: 0, startY: 0 });
   const audio = useAmbientSound(audioMix.master, audioMix.background);
   const effectsVolume = audioMix.master * audioMix.effects;
-  useBoostSound(boosting && cruising && entered && !paused && !editing && !telemetry.finished, audio.muted, effectsVolume);
+  const startBoostAudio = useBoostSound(boosting && cruising && entered && !paused && !editing && !telemetry.finished, audio.muted, effectsVolume);
   const spatialAudio = useSceneSpatialSounds({
     progress: telemetry.progress,
     lateral: telemetry.lateral,
@@ -2218,6 +2286,7 @@ function JinshaExperienceCore({ onCriticalAssetReady, onCriticalAssetError }: { 
       if ((event.code === "ShiftLeft" || event.code === "ShiftRight") && entered) {
         event.preventDefault();
         if (event.repeat) return;
+        startBoostAudio();
         if (!cruising) {
           controls.current.boost = true;
           setBoosting(true);
@@ -2244,15 +2313,16 @@ function JinshaExperienceCore({ onCriticalAssetReady, onCriticalAssetError }: { 
     window.addEventListener("keyup", onUp);
     window.addEventListener("blur", releaseControls);
     return () => { window.removeEventListener("keydown", onDown); window.removeEventListener("keyup", onUp); window.removeEventListener("blur", releaseControls); };
-  }, [cruising, editing, entered, paused, toggleCruising]);
+  }, [cruising, editing, entered, paused, startBoostAudio, toggleCruising]);
 
   const reportTelemetry = useCallback((value: Telemetry) => setTelemetry(value), []);
   const toggleBoost = useCallback(() => {
     if (!cruising) return;
+    startBoostAudio();
     const next = !controls.current.boost;
     controls.current.boost = next;
     setBoosting(next);
-  }, [cruising]);
+  }, [cruising, startBoostAudio]);
 
   const releaseTouchDrag = useCallback((pointerId?: number) => {
     if (pointerId !== undefined && touchDrag.current.pointerId !== pointerId) return;
@@ -2501,6 +2571,7 @@ function JinshaExperienceCore({ onCriticalAssetReady, onCriticalAssetError }: { 
               editorMode={editorMode}
               editorLocal={editorLocal}
               editorUniformScale={editorUniformScale}
+              initialPrefetchEnabled={initialPrefetchEnabled}
               onSelect={setSelectedAssetId}
               onTransformChange={updateSceneTransform}
               onTelemetry={reportTelemetry}
@@ -2576,7 +2647,15 @@ function JinshaExperienceCore({ onCriticalAssetReady, onCriticalAssetError }: { 
                 ["effects", "场景音效"],
               ] as [keyof AudioMix, string][]).map(([channel, label]) => <label key={channel}>
                 <span>{label}<b>{Math.round(audioMix[channel] * 100)}</b></span>
-                <input type="range" min="0" max="1" step="0.01" value={audioMix[channel]} onChange={(event) => updateAudioMix(channel, Number(event.target.value))} />
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={audioMix[channel]}
+                  onInput={(event) => updateAudioMix(channel, Number(event.currentTarget.value))}
+                  onChange={(event) => updateAudioMix(channel, Number(event.currentTarget.value))}
+                />
               </label>)}
             </section>}
           </div>
@@ -2679,7 +2758,6 @@ export function JinshaExperience() {
     renderer: false,
     character: false,
     cave: false,
-    "ancient-tree": false,
   });
   const [coreMounted, setCoreMounted] = useState(false);
   const [compatibilityIssue, setCompatibilityIssue] = useState(false);
@@ -2694,9 +2772,8 @@ export function JinshaExperience() {
   const criticalProgress = Math.min(100,
     (coreMounted ? 5 : 0)
     + (criticalAssets.renderer ? 10 : 0)
-    + (criticalAssets.character ? 30 : 0)
-    + (criticalAssets.cave ? 30 : 0)
-    + (criticalAssets["ancient-tree"] ? 20 : 0)
+    + (criticalAssets.character ? 35 : 0)
+    + (criticalAssets.cave ? 45 : 0)
     + (criticalFrameReady ? 5 : 0));
   const criticalStatus = criticalError
     ? criticalError
@@ -2706,9 +2783,7 @@ export function JinshaExperience() {
         ? "正在下载并解码首页人物"
         : !criticalAssets.cave
           ? "正在构筑岩层秘境"
-          : !criticalAssets["ancient-tree"]
-            ? "正在预载前方场景"
-            : "正在确认首帧画面";
+          : "正在确认首帧画面";
 
   useEffect(() => {
     THREE.Cache.enabled = true;
@@ -2760,7 +2835,7 @@ export function JinshaExperience() {
     {compatibilityIssue
       ? <CompatibilityScreen />
       : <>
-        {coreMounted && <JinshaExperienceCore onCriticalAssetReady={reportCriticalAssetReady} onCriticalAssetError={reportCriticalAssetError} />}
+        {coreMounted && <JinshaExperienceCore initialPrefetchEnabled={allCriticalAssetsReady} onCriticalAssetReady={reportCriticalAssetReady} onCriticalAssetError={reportCriticalAssetError} />}
         {!criticalReady && <CriticalLoadingScreen progress={criticalProgress} leaving={criticalLeaving} status={criticalStatus} error={criticalError} onRetry={() => window.location.reload()} />}
       </>}
   </>;
