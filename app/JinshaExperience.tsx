@@ -1,13 +1,13 @@
 "use client";
 
-import { Canvas, useFrame, useLoader, useThree, type ThreeEvent } from "@react-three/fiber";
+import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
-import { Component, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
+import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
 import * as THREE from "three";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { GLTFLoader, type GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { ROUTE_LENGTH, SCENE_ASSETS, STAGES, createDefaultTransforms, type SceneAsset, type SceneTransform, type Vector3Tuple } from "./sceneAssets";
 
 gsap.registerPlugin(useGSAP);
@@ -19,6 +19,7 @@ type SceneMotion = "static" | "float" | "rotate-z-float";
 type CollisionHit = { distance: number; normal: THREE.Vector3; assetId: string };
 type CriticalAssetId = "renderer" | "character" | "cave";
 type CriticalAssetReporter = (id: CriticalAssetId) => void;
+type CriticalAssetProgressReporter = (id: CriticalAssetId, progress: number) => void;
 type CriticalAssetErrorReporter = (label: string) => void;
 
 type Controls = { left: boolean; right: boolean; up: boolean; down: boolean; boost: boolean; touchX: number; touchY: number };
@@ -869,7 +870,7 @@ function disposeModel(root: THREE.Object3D) {
   textures.forEach((texture) => texture.dispose());
 }
 
-function SceneModel({ asset, transform, quality, editing, selected, onSelect, register, registerCollider, onCriticalAssetReady, onCriticalAssetError }: {
+function SceneModel({ asset, transform, quality, editing, selected, onSelect, register, registerCollider, onCriticalAssetReady, onCriticalAssetProgress, onCriticalAssetError }: {
   asset: SceneAsset;
   transform: SceneTransform;
   quality: Quality;
@@ -879,6 +880,7 @@ function SceneModel({ asset, transform, quality, editing, selected, onSelect, re
   register: (id: string, object: THREE.Group | null) => void;
   registerCollider: (id: string, object: THREE.Group | null) => void;
   onCriticalAssetReady: CriticalAssetReporter;
+  onCriticalAssetProgress: CriticalAssetProgressReporter;
   onCriticalAssetError: CriticalAssetErrorReporter;
 }) {
   const group = useRef<THREE.Group>(null);
@@ -926,43 +928,59 @@ function SceneModel({ asset, transform, quality, editing, selected, onSelect, re
     let disposed = false;
     let loaded: THREE.Group | null = null;
     let loadedMixer: THREE.AnimationMixer | null = null;
+    let retryTimer = 0;
+    let attempt = 0;
     setFailed(false);
     setModel(null);
     const loader = new GLTFLoader().setDRACOLoader(dracoLoader);
-    loader.load(modelUrl, (gltf) => {
-      loaded = gltf.scene;
-      const removable: THREE.Object3D[] = [];
-      loaded.traverse((object) => {
-        if (object instanceof THREE.Light || object instanceof THREE.Camera) removable.push(object);
-        if (!(object instanceof THREE.Mesh)) return;
-        object.frustumCulled = true;
-        object.castShadow = false;
-        object.receiveShadow = false;
+    const maxAttempts = CRITICAL_SCENE_ASSET_IDS.has(asset.id) ? 3 : 2;
+    const loadModel = () => {
+      attempt += 1;
+      loader.load(modelUrl, (gltf) => {
+        loaded = gltf.scene;
+        const removable: THREE.Object3D[] = [];
+        loaded.traverse((object) => {
+          if (object instanceof THREE.Light || object instanceof THREE.Camera) removable.push(object);
+          if (!(object instanceof THREE.Mesh)) return;
+          object.frustumCulled = true;
+          object.castShadow = false;
+          object.receiveShadow = false;
+        });
+        removable.forEach((object) => object.parent?.remove(object));
+        if (disposed) {
+          disposeModel(loaded);
+          return;
+        }
+        if (gltf.animations.length > 0) {
+          loadedMixer = new THREE.AnimationMixer(loaded);
+          gltf.animations.forEach((clip) => loadedMixer?.clipAction(clip).reset().setLoop(THREE.LoopRepeat, Infinity).play());
+          animationMixer.current = loadedMixer;
+        }
+        if (CRITICAL_SCENE_ASSET_IDS.has(asset.id)) onCriticalAssetProgress(asset.id as CriticalAssetId, 1);
+        setModel(loaded);
+      }, (event) => {
+        if (disposed || !event.total || !CRITICAL_SCENE_ASSET_IDS.has(asset.id)) return;
+        onCriticalAssetProgress(asset.id as CriticalAssetId, event.loaded / event.total);
+      }, () => {
+        if (disposed) return;
+        if (attempt < maxAttempts) {
+          retryTimer = window.setTimeout(loadModel, 650 * attempt);
+          return;
+        }
+        setFailed(true);
+        if (CRITICAL_SCENE_ASSET_IDS.has(asset.id)) onCriticalAssetError(asset.name);
       });
-      removable.forEach((object) => object.parent?.remove(object));
-      if (disposed) {
-        disposeModel(loaded);
-        return;
-      }
-      if (gltf.animations.length > 0) {
-        loadedMixer = new THREE.AnimationMixer(loaded);
-        gltf.animations.forEach((clip) => loadedMixer?.clipAction(clip).reset().setLoop(THREE.LoopRepeat, Infinity).play());
-        animationMixer.current = loadedMixer;
-      }
-      setModel(loaded);
-    }, undefined, () => {
-      if (disposed) return;
-      setFailed(true);
-      if (CRITICAL_SCENE_ASSET_IDS.has(asset.id)) onCriticalAssetError(asset.name);
-    });
+    };
+    loadModel();
     return () => {
       disposed = true;
+      if (retryTimer) window.clearTimeout(retryTimer);
       loadedMixer?.stopAllAction();
       if (loaded) loadedMixer?.uncacheRoot(loaded);
       if (animationMixer.current === loadedMixer) animationMixer.current = null;
       if (loaded) disposeModel(loaded);
     };
-  }, [asset.id, asset.name, modelUrl, onCriticalAssetError]);
+  }, [asset.id, asset.name, modelUrl, onCriticalAssetError, onCriticalAssetProgress]);
 
   useEffect(() => {
     if (editing || asset.id === "cave") {
@@ -1163,7 +1181,7 @@ function EditorHeadlight({ enabled }: { enabled: boolean }) {
   return enabled ? <pointLight ref={light} color="#ffe0a0" intensity={115} distance={90} decay={1.45} /> : null;
 }
 
-function SceneAssetField({ progressRef, transforms, quality, editing, selectedId, editorMode, editorLocal, editorUniformScale, initialPrefetchEnabled, onSelect, onTransformChange, onColliderRegister, onCriticalAssetReady, onCriticalAssetError }: {
+function SceneAssetField({ progressRef, transforms, quality, editing, selectedId, editorMode, editorLocal, editorUniformScale, initialPrefetchEnabled, onSelect, onTransformChange, onColliderRegister, onCriticalAssetReady, onCriticalAssetProgress, onCriticalAssetError }: {
   progressRef: RefObject<number>;
   transforms: Record<string, SceneTransform>;
   quality: Quality;
@@ -1177,6 +1195,7 @@ function SceneAssetField({ progressRef, transforms, quality, editing, selectedId
   onTransformChange: (id: string, transform: SceneTransform) => void;
   onColliderRegister: (id: string, object: THREE.Group | null) => void;
   onCriticalAssetReady: CriticalAssetReporter;
+  onCriticalAssetProgress: CriticalAssetProgressReporter;
   onCriticalAssetError: CriticalAssetErrorReporter;
 }) {
   const [streamCenter, setStreamCenter] = useState(0);
@@ -1237,6 +1256,7 @@ function SceneAssetField({ progressRef, transforms, quality, editing, selectedId
       register={register}
       registerCollider={onColliderRegister}
       onCriticalAssetReady={onCriticalAssetReady}
+      onCriticalAssetProgress={onCriticalAssetProgress}
       onCriticalAssetError={onCriticalAssetError}
     />)}
     {!editing && loadedAssets.map((asset) => <ArtifactParticleEffect
@@ -1341,7 +1361,51 @@ function SceneEditorPanel({ selectedId, transforms, mode, local, uniformScale, o
   </aside>;
 }
 
-function Xiyu({ playerRef, controls, started, entering, cruising, quality, onCriticalAssetReady }: { playerRef: RefObject<THREE.Group | null>; controls: RefObject<Controls>; started: boolean; entering: boolean; cruising: boolean; quality: Quality; onCriticalAssetReady: CriticalAssetReporter }) {
+function Xiyu({ playerRef, controls, started, entering, cruising, quality, onCriticalAssetReady, onCriticalAssetProgress, onCriticalAssetError }: { playerRef: RefObject<THREE.Group | null>; controls: RefObject<Controls>; started: boolean; entering: boolean; cruising: boolean; quality: Quality; onCriticalAssetReady: CriticalAssetReporter; onCriticalAssetProgress: CriticalAssetProgressReporter; onCriticalAssetError: CriticalAssetErrorReporter }) {
+  const [gltf, setGltf] = useState<GLTF | null>(null);
+  const modelUrl = quality === "eco" ? "/models/xiyu-eco.glb" : "/models/xiyu-optimized.glb";
+
+  useEffect(() => {
+    let disposed = false;
+    let loaded: GLTF | null = null;
+    let retryTimer = 0;
+    let attempt = 0;
+    const loader = new GLTFLoader().setDRACOLoader(dracoLoader);
+    const loadCharacter = () => {
+      attempt += 1;
+      loader.load(modelUrl, (result) => {
+        loaded = result;
+        if (disposed) {
+          disposeModel(result.scene);
+          return;
+        }
+        onCriticalAssetProgress("character", 1);
+        setGltf(result);
+      }, (event) => {
+        if (disposed || !event.total) return;
+        onCriticalAssetProgress("character", event.loaded / event.total);
+      }, () => {
+        if (disposed) return;
+        if (attempt < 3) {
+          retryTimer = window.setTimeout(loadCharacter, 650 * attempt);
+          return;
+        }
+        onCriticalAssetError("曦羽");
+      });
+    };
+    loadCharacter();
+    return () => {
+      disposed = true;
+      if (retryTimer) window.clearTimeout(retryTimer);
+      if (loaded) disposeModel(loaded.scene);
+    };
+  }, [modelUrl, onCriticalAssetError, onCriticalAssetProgress]);
+
+  if (!gltf) return null;
+  return <XiyuModel gltf={gltf} playerRef={playerRef} controls={controls} started={started} entering={entering} cruising={cruising} quality={quality} onCriticalAssetReady={onCriticalAssetReady} />;
+}
+
+function XiyuModel({ gltf, playerRef, controls, started, entering, cruising, quality, onCriticalAssetReady }: { gltf: GLTF; playerRef: RefObject<THREE.Group | null>; controls: RefObject<Controls>; started: boolean; entering: boolean; cruising: boolean; quality: Quality; onCriticalAssetReady: CriticalAssetReporter }) {
   const halo = useRef<THREE.Group>(null);
   const characterScale = useRef<THREE.Group>(null);
   const modelMotion = useRef<THREE.Group>(null);
@@ -1349,7 +1413,6 @@ function Xiyu({ playerRef, controls, started, entering, cruising, quality, onCri
   const idlePhase = useRef(0);
   const cruiseBlend = useRef(1);
   const boostBlend = useRef(0);
-  const gltf = useLoader(GLTFLoader, quality === "eco" ? "/models/xiyu-eco.glb" : "/models/xiyu-optimized.glb", (loader) => loader.setDRACOLoader(dracoLoader));
   const mixer = useMemo(() => new THREE.AnimationMixer(gltf.scene), [gltf.scene]);
   const animationClip = useMemo(() => {
     const source = gltf.animations[0];
@@ -1496,7 +1559,7 @@ function Xiyu({ playerRef, controls, started, entering, cruising, quality, onCri
   );
 }
 
-function FlightScene({ started, entering, paused, cruising, quality, controls, resetKey, transforms, editing, selectedId, editorMode, editorLocal, editorUniformScale, initialPrefetchEnabled, onSelect, onTransformChange, onTelemetry, onCriticalAssetReady, onCriticalAssetError }: {
+function FlightScene({ started, entering, paused, cruising, quality, controls, resetKey, transforms, editing, selectedId, editorMode, editorLocal, editorUniformScale, initialPrefetchEnabled, onSelect, onTransformChange, onTelemetry, onCriticalAssetReady, onCriticalAssetProgress, onCriticalAssetError }: {
   started: boolean;
   entering: boolean;
   paused: boolean;
@@ -1515,6 +1578,7 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
   onTransformChange: (id: string, transform: SceneTransform) => void;
   onTelemetry: (telemetry: Telemetry) => void;
   onCriticalAssetReady: CriticalAssetReporter;
+  onCriticalAssetProgress: CriticalAssetProgressReporter;
   onCriticalAssetError: CriticalAssetErrorReporter;
 }) {
   const { gl } = useThree();
@@ -2077,15 +2141,14 @@ function FlightScene({ started, entering, paused, cruising, quality, controls, r
           onTransformChange={onTransformChange}
           onColliderRegister={registerCollider}
           onCriticalAssetReady={onCriticalAssetReady}
+          onCriticalAssetProgress={onCriticalAssetProgress}
           onCriticalAssetError={onCriticalAssetError}
         />
         <LightDust quality={quality} />
       </group>
       {!editing && <>
         <SpeedLines quality={quality} controls={controls} cruising={cruising} />
-        <Suspense fallback={null}>
-          <Xiyu playerRef={player} controls={controls} started={started} entering={entering} cruising={cruising} quality={quality} onCriticalAssetReady={onCriticalAssetReady} />
-        </Suspense>
+        <Xiyu playerRef={player} controls={controls} started={started} entering={entering} cruising={cruising} quality={quality} onCriticalAssetReady={onCriticalAssetReady} onCriticalAssetProgress={onCriticalAssetProgress} onCriticalAssetError={onCriticalAssetError} />
         <FireflyTrail playerRef={player} quality={quality} active={started && cruising && !paused} />
       </>}
     </>
@@ -2109,7 +2172,7 @@ class CoreAssetBoundary extends Component<{ children: ReactNode; onError: Critic
   }
 }
 
-function JinshaExperienceCore({ initialPrefetchEnabled, onCriticalAssetReady, onCriticalAssetError }: { initialPrefetchEnabled: boolean; onCriticalAssetReady: CriticalAssetReporter; onCriticalAssetError: CriticalAssetErrorReporter }) {
+function JinshaExperienceCore({ initialPrefetchEnabled, onCriticalAssetReady, onCriticalAssetProgress, onCriticalAssetError }: { initialPrefetchEnabled: boolean; onCriticalAssetReady: CriticalAssetReporter; onCriticalAssetProgress: CriticalAssetProgressReporter; onCriticalAssetError: CriticalAssetErrorReporter }) {
   const experienceRef = useRef<HTMLElement>(null);
   const [entered, setEntered] = useState(false);
   const [entering, setEntering] = useState(false);
@@ -2576,6 +2639,7 @@ function JinshaExperienceCore({ initialPrefetchEnabled, onCriticalAssetReady, on
               onTransformChange={updateSceneTransform}
               onTelemetry={reportTelemetry}
               onCriticalAssetReady={onCriticalAssetReady}
+              onCriticalAssetProgress={onCriticalAssetProgress}
               onCriticalAssetError={onCriticalAssetError}
             />
           </Canvas>
@@ -2753,30 +2817,45 @@ export function JinshaExperience() {
   const [criticalLeaving, setCriticalLeaving] = useState(false);
   const [criticalReady, setCriticalReady] = useState(false);
   const [criticalFrameReady, setCriticalFrameReady] = useState(false);
+  const [criticalDisplayProgress, setCriticalDisplayProgress] = useState(0);
+  const [criticalSlow, setCriticalSlow] = useState(false);
   const [criticalError, setCriticalError] = useState<string | null>(null);
   const [criticalAssets, setCriticalAssets] = useState<Record<CriticalAssetId, boolean>>({
     renderer: false,
     character: false,
     cave: false,
   });
+  const [criticalAssetProgress, setCriticalAssetProgress] = useState<Record<CriticalAssetId, number>>({
+    renderer: 0,
+    character: 0,
+    cave: 0,
+  });
   const [coreMounted, setCoreMounted] = useState(false);
   const [compatibilityIssue, setCompatibilityIssue] = useState(false);
 
   const reportCriticalAssetReady = useCallback<CriticalAssetReporter>((id) => {
     setCriticalAssets((current) => current[id] ? current : { ...current, [id]: true });
+    setCriticalAssetProgress((current) => current[id] === 1 ? current : { ...current, [id]: 1 });
+  }, []);
+  const reportCriticalAssetProgress = useCallback<CriticalAssetProgressReporter>((id, progress) => {
+    const nextProgress = THREE.MathUtils.clamp(progress, 0, 1);
+    setCriticalAssetProgress((current) => nextProgress <= current[id] ? current : { ...current, [id]: nextProgress });
   }, []);
   const reportCriticalAssetError = useCallback<CriticalAssetErrorReporter>((label) => {
     setCriticalError(`核心资源“${label}”加载失败，请检查网络后重试。`);
   }, []);
   const allCriticalAssetsReady = Object.values(criticalAssets).every(Boolean);
-  const criticalProgress = Math.min(100,
+  const measuredCriticalProgress = Math.min(100,
     (coreMounted ? 5 : 0)
-    + (criticalAssets.renderer ? 10 : 0)
-    + (criticalAssets.character ? 35 : 0)
-    + (criticalAssets.cave ? 45 : 0)
+    + criticalAssetProgress.renderer * 10
+    + criticalAssetProgress.character * 35
+    + criticalAssetProgress.cave * 45
     + (criticalFrameReady ? 5 : 0));
+  const criticalProgress = Math.round(criticalDisplayProgress);
   const criticalStatus = criticalError
     ? criticalError
+    : criticalSlow
+      ? "网络较慢，核心场景仍在继续加载"
     : !criticalAssets.renderer
       ? "正在初始化三维渲染器"
       : !criticalAssets.character
@@ -2807,19 +2886,37 @@ export function JinshaExperience() {
   useEffect(() => {
     if (!coreMounted || allCriticalAssetsReady || criticalReady) return;
     const timeout = window.setTimeout(() => {
-      setCriticalError("核心场景加载时间过长，请检查网络后重试。");
-    }, 60000);
+      setCriticalSlow(true);
+    }, 75000);
     return () => window.clearTimeout(timeout);
   }, [allCriticalAssetsReady, coreMounted, criticalReady]);
 
   useEffect(() => {
+    if (criticalReady) return;
+    const interval = window.setInterval(() => {
+      setCriticalDisplayProgress((current) => {
+        if (criticalFrameReady) return 100;
+        if (current < measuredCriticalProgress) {
+          const distance = measuredCriticalProgress - current;
+          return Math.min(measuredCriticalProgress, current + Math.max(0.28, distance * 0.16));
+        }
+        if (coreMounted && !criticalError) return Math.min(94, current + 0.18);
+        return current;
+      });
+    }, 180);
+    return () => window.clearInterval(interval);
+  }, [coreMounted, criticalError, criticalFrameReady, criticalReady, measuredCriticalProgress]);
+
+  useEffect(() => {
     if (!allCriticalAssetsReady || criticalReady) return;
     setCriticalError(null);
+    setCriticalSlow(false);
     let secondFrame = 0;
     let exitTimer = 0;
     const firstFrame = window.requestAnimationFrame(() => {
       secondFrame = window.requestAnimationFrame(() => {
         setCriticalFrameReady(true);
+        setCriticalDisplayProgress(100);
         setCriticalLeaving(true);
         exitTimer = window.setTimeout(() => setCriticalReady(true), 440);
       });
@@ -2835,7 +2932,7 @@ export function JinshaExperience() {
     {compatibilityIssue
       ? <CompatibilityScreen />
       : <>
-        {coreMounted && <JinshaExperienceCore initialPrefetchEnabled={allCriticalAssetsReady} onCriticalAssetReady={reportCriticalAssetReady} onCriticalAssetError={reportCriticalAssetError} />}
+        {coreMounted && <JinshaExperienceCore initialPrefetchEnabled={allCriticalAssetsReady} onCriticalAssetReady={reportCriticalAssetReady} onCriticalAssetProgress={reportCriticalAssetProgress} onCriticalAssetError={reportCriticalAssetError} />}
         {!criticalReady && <CriticalLoadingScreen progress={criticalProgress} leaving={criticalLeaving} status={criticalStatus} error={criticalError} onRetry={() => window.location.reload()} />}
       </>}
   </>;
