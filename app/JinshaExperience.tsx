@@ -30,9 +30,9 @@ const FOG_COLORS = ["#0a1d1c", "#241408", "#170d25"] as const;
 
 const SCENE_TRANSFORMS_KEY = "jinsha-scene-transforms-v2";
 const AUDIO_MIX_KEY = "jinsha-audio-mix-v2";
-const CAVE_COLLISION_EXCLUSIONS = new Set(["cave"]);
-const FORWARD_COLLISION_EXCLUSIONS = new Set(["cave", "civilization-gate"]);
-const CAMERA_COLLISION_EXCLUSIONS = new Set<string>();
+const CAVE_COLLISION_EXCLUSIONS = new Set(["cave", "sunbird-fragment"]);
+const FORWARD_COLLISION_EXCLUSIONS = new Set(["cave", "sunbird-fragment", "civilization-gate"]);
+const CAMERA_COLLISION_EXCLUSIONS = new Set(["sunbird-fragment"]);
 const PLAYER_COLLISION_RADIUS = 0.82;
 const CAMERA_COLLISION_RADIUS = 0.5;
 const COLLISION_SKIN = 0.07;
@@ -67,8 +67,10 @@ const SCENE_MOTIONS: Record<string, SceneMotion> = {
   "civilization-gate": "static",
 };
 const HIDDEN_SCENE_NODES: Record<string, ReadonlySet<string>> = {
-  "civilization-gate": new Set(["tripo_node_bbcc85b6-3ad8-422b-b677-e2766067ee58"]),
+  "civilization-gate": new Set(["立方体"]),
 };
+const CIVILIZATION_GATE_DISC_NODE = "Meshy_AI_Golden_Vortex_Emblem_0817192120_texture";
+const CIVILIZATION_GATE_DISC_FLIP = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
 const LEGACY_DEFAULT_POSITIONS: Record<string, Vector3Tuple> = {
   cave: [0, -0.4, -10],
   "ancient-tree": [-2.6, -0.5, -52],
@@ -197,47 +199,25 @@ function useAmbientSound(masterVolume: number, backgroundVolume: number) {
 
 function useBoostSound(active: boolean, muted: boolean, effectsVolume: number) {
   const player = useRef<HTMLAudioElement | null>(null);
-  const context = useRef<AudioContext | null>(null);
-  const source = useRef<MediaElementAudioSourceNode | null>(null);
-  const gain = useRef<GainNode | null>(null);
+  const fadeFrame = useRef(0);
 
   useEffect(() => {
     const track = new Audio("/audio/boost-wind.mp3");
     track.loop = true;
-    track.preload = "metadata";
-    track.volume = 1;
+    track.preload = "auto";
+    track.volume = 0;
     player.current = track;
     return () => {
+      window.cancelAnimationFrame(fadeFrame.current);
       track.pause();
       track.src = "";
       player.current = null;
-      source.current?.disconnect();
-      gain.current?.disconnect();
-      source.current = null;
-      gain.current = null;
-      if (context.current) void context.current.close();
-      context.current = null;
     };
   }, []);
 
   const start = useCallback(() => {
     const track = player.current;
     if (!track) return;
-    if (!context.current) {
-      const AudioContextConstructor = window.AudioContext
-        ?? (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (AudioContextConstructor) {
-        const audioContext = new AudioContextConstructor();
-        const mediaSource = audioContext.createMediaElementSource(track);
-        const volumeGain = audioContext.createGain();
-        volumeGain.gain.value = 0;
-        mediaSource.connect(volumeGain).connect(audioContext.destination);
-        context.current = audioContext;
-        source.current = mediaSource;
-        gain.current = volumeGain;
-      }
-    }
-    if (context.current?.state === "suspended") void context.current.resume();
     track.muted = false;
     void track.play().catch(() => undefined);
   }, []);
@@ -246,15 +226,19 @@ function useBoostSound(active: boolean, muted: boolean, effectsVolume: number) {
     const track = player.current;
     if (!track) return;
     const audible = active && !muted;
-    const targetVolume = audible ? THREE.MathUtils.clamp(0.64 * effectsVolume, 0, 1) : 0;
-    if (gain.current && context.current) {
-      const now = context.current.currentTime;
-      gain.current.gain.cancelScheduledValues(now);
-      gain.current.gain.setTargetAtTime(targetVolume, now, targetVolume > gain.current.gain.value ? 0.22 : 0.3);
-    } else {
-      track.muted = muted;
-      track.volume = targetVolume;
-    }
+    const targetVolume = audible ? THREE.MathUtils.clamp(0.52 * effectsVolume, 0, 1) : 0;
+    const startVolume = track.volume;
+    const startedAt = performance.now();
+    const duration = targetVolume > startVolume ? 180 : 320;
+    window.cancelAnimationFrame(fadeFrame.current);
+    if (audible && track.paused) void track.play().catch(() => undefined);
+    const updateVolume = (now: number) => {
+      const progress = THREE.MathUtils.clamp((now - startedAt) / duration, 0, 1);
+      track.volume = THREE.MathUtils.lerp(startVolume, targetVolume, 1 - Math.pow(1 - progress, 3));
+      if (progress < 1) fadeFrame.current = window.requestAnimationFrame(updateVolume);
+    };
+    fadeFrame.current = window.requestAnimationFrame(updateVolume);
+    return () => window.cancelAnimationFrame(fadeFrame.current);
   }, [active, effectsVolume, muted]);
 
   return start;
@@ -843,9 +827,6 @@ function SacredGateParticles({ asset, transform, quality }: { asset: SceneAsset;
   });
 
   return <group position={transform.position} rotation={transform.rotation}>
-    <sprite position={[0, 0, extent * 0.025]} scale={[extent * 0.72, extent * 0.72, 1]}>
-      <spriteMaterial map={glowTexture} color="#dfad4d" transparent opacity={quality === "high" ? 0.18 : 0.13} depthWrite={false} blending={THREE.AdditiveBlending} />
-    </sprite>
     <points ref={points} frustumCulled={false}>
       <bufferGeometry>
         <bufferAttribute attach="attributes-position" args={[data.positions, 3]} />
@@ -950,6 +931,9 @@ function SceneModel({ asset, transform, quality, editing, selected, onSelect, re
         const hiddenNodes = HIDDEN_SCENE_NODES[asset.id];
         loaded.traverse((object) => {
           if (object instanceof THREE.Light || object instanceof THREE.Camera || hiddenNodes?.has(object.name)) removable.push(object);
+          if (asset.id === "civilization-gate" && object.name === CIVILIZATION_GATE_DISC_NODE) {
+            object.quaternion.premultiply(CIVILIZATION_GATE_DISC_FLIP);
+          }
           if (!(object instanceof THREE.Mesh)) return;
           object.frustumCulled = true;
           object.castShadow = false;
@@ -960,7 +944,7 @@ function SceneModel({ asset, transform, quality, editing, selected, onSelect, re
           disposeModel(loaded);
           return;
         }
-        if (gltf.animations.length > 0) {
+        if (gltf.animations.length > 0 && asset.id !== "civilization-gate") {
           loadedMixer = new THREE.AnimationMixer(loaded);
           gltf.animations.forEach((clip) => loadedMixer?.clipAction(clip).reset().setLoop(THREE.LoopRepeat, Infinity).play());
           animationMixer.current = loadedMixer;
@@ -2244,7 +2228,6 @@ function JinshaExperienceCore({ initialPrefetchEnabled, initialRevealReady, onCr
   });
   const controls = useRef<Controls>({ left: false, right: false, up: false, down: false, boost: false, touchX: 0, touchY: 0 });
   const touchDrag = useRef({ pointerId: -1, startX: 0, startY: 0 });
-  const ctrlShortcut = useRef({ pressed: false, chord: false });
   const audio = useAmbientSound(audioMix.master, audioMix.background);
   const effectsVolume = audioMix.master * audioMix.effects;
   const startBoostAudio = useBoostSound(boosting && cruising && entered && !paused && !editing && !telemetry.finished, audio.muted, effectsVolume);
@@ -2335,8 +2318,11 @@ function JinshaExperienceCore({ initialPrefetchEnabled, initialRevealReady, onCr
   useEffect(() => {
     const desktopPointer = window.matchMedia("(pointer: fine)").matches && window.innerWidth > 720;
     if (!desktopPointer) return;
+    let fullscreenTogglePending = false;
 
     const toggleFullscreen = async () => {
+      if (fullscreenTogglePending) return;
+      fullscreenTogglePending = true;
       const fullscreenDocument = document as Document & {
         webkitFullscreenElement?: Element | null;
         webkitExitFullscreen?: () => Promise<void> | void;
@@ -2355,30 +2341,20 @@ function JinshaExperienceCore({ initialPrefetchEnabled, initialRevealReady, onCr
         }
       } catch {
         // Browsers can reject fullscreen when the page is embedded or permission is disabled.
+      } finally {
+        window.setTimeout(() => { fullscreenTogglePending = false; }, 180);
       }
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      const isControl = event.code === "ControlLeft" || event.code === "ControlRight";
-      if (isControl) {
-        if (!event.repeat) ctrlShortcut.current = { pressed: true, chord: false };
-        return;
-      }
-      if (ctrlShortcut.current.pressed || event.ctrlKey) ctrlShortcut.current.chord = true;
+      if ((event.code !== "ControlLeft" && event.code !== "ControlRight") || event.repeat) return;
+      const target = event.target;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return;
+      event.preventDefault();
+      void toggleFullscreen();
     };
-    const onKeyUp = (event: KeyboardEvent) => {
-      if (event.code !== "ControlLeft" && event.code !== "ControlRight") return;
-      const shouldToggle = ctrlShortcut.current.pressed && !ctrlShortcut.current.chord;
-      ctrlShortcut.current = { pressed: false, chord: false };
-      if (shouldToggle) void toggleFullscreen();
-    };
-    const resetShortcut = () => { ctrlShortcut.current = { pressed: false, chord: false }; };
-    window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("keyup", onKeyUp);
-    window.addEventListener("blur", resetShortcut);
+    window.addEventListener("keydown", onKeyDown, { capture: true });
     return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("keyup", onKeyUp);
-      window.removeEventListener("blur", resetShortcut);
+      window.removeEventListener("keydown", onKeyDown, { capture: true });
     };
   }, []);
 
@@ -2857,8 +2833,16 @@ function JinshaExperienceCore({ initialPrefetchEnabled, initialRevealReady, onCr
   );
 }
 
-function CriticalLoadingScreen({ progress, leaving, status, error, onRetry }: { progress: number; leaving: boolean; status: string; error: string | null; onRetry: () => void }) {
-  return <main className={`critical-loading ${leaving ? "is-leaving" : ""} ${error ? "has-error" : ""}`} role={error ? "alert" : "status"} aria-live="polite" aria-label={error ? "核心场景载入失败" : `核心场景载入中，${progress}%`}>
+function CriticalLoadingScreen({ progress, leaving, status, error, onRetry, onLeaveComplete }: { progress: number; leaving: boolean; status: string; error: string | null; onRetry: () => void; onLeaveComplete: () => void }) {
+  return <main
+    className={`critical-loading ${leaving ? "is-leaving" : ""} ${error ? "has-error" : ""}`}
+    role={error ? "alert" : "status"}
+    aria-live="polite"
+    aria-label={error ? "核心场景载入失败" : `核心场景载入中，${progress}%`}
+    onTransitionEnd={(event) => {
+      if (leaving && event.target === event.currentTarget && event.propertyName === "opacity") onLeaveComplete();
+    }}
+  >
     <div className="critical-loading-depth" aria-hidden="true"><i /><i /><i /></div>
     <section className="critical-loading-content">
       <div className="critical-loading-seal" aria-hidden="true"><i /><span>羽</span></div>
@@ -3007,20 +2991,22 @@ export function JinshaExperience() {
   useEffect(() => {
     if (!criticalFrameReady || criticalDisplayProgress < 99.5 || criticalReady) return;
     setCriticalDisplayProgress(100);
-    const leaveTimer = window.setTimeout(() => setCriticalLeaving(true), 320);
-    const readyTimer = window.setTimeout(() => setCriticalReady(true), 760);
-    return () => {
-      window.clearTimeout(leaveTimer);
-      window.clearTimeout(readyTimer);
-    };
+    const leaveTimer = window.setTimeout(() => setCriticalLeaving(true), 380);
+    return () => window.clearTimeout(leaveTimer);
   }, [criticalDisplayProgress, criticalFrameReady, criticalReady]);
+
+  useEffect(() => {
+    if (!criticalLeaving || criticalReady) return;
+    const fallbackTimer = window.setTimeout(() => setCriticalReady(true), 1800);
+    return () => window.clearTimeout(fallbackTimer);
+  }, [criticalLeaving, criticalReady]);
 
   return <>
     {compatibilityIssue
       ? <CompatibilityScreen />
       : <>
         {coreMounted && <JinshaExperienceCore initialPrefetchEnabled={allCriticalAssetsReady} initialRevealReady={criticalLeaving || criticalReady} onCriticalAssetReady={reportCriticalAssetReady} onCriticalAssetProgress={reportCriticalAssetProgress} onCriticalAssetError={reportCriticalAssetError} />}
-        {!criticalReady && <CriticalLoadingScreen progress={criticalProgress} leaving={criticalLeaving} status={criticalStatus} error={criticalError} onRetry={() => window.location.reload()} />}
+        {!criticalReady && <CriticalLoadingScreen progress={criticalProgress} leaving={criticalLeaving} status={criticalStatus} error={criticalError} onRetry={() => window.location.reload()} onLeaveComplete={() => setCriticalReady(true)} />}
       </>}
   </>;
 }
