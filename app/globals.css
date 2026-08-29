@@ -61,6 +61,12 @@ button { font: inherit; }
   isolation: isolate;
   background: var(--void);
 }
+.experience.is-preloading .scene,
+.experience.is-preloading .intro {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
 
 .critical-loading {
   position: fixed;

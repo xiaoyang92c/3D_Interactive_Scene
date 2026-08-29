@@ -12,6 +12,13 @@ export async function generateMetadata(): Promise<Metadata> {
     metadataBase: new URL(origin),
     title: "羽见千年｜金沙沉浸式数字体验",
     description: "跟随曦羽飞越自然、文明与记忆，进入金沙文明的数字旅程。",
+    icons: {
+      icon: [
+        { url: "/favicon.ico", sizes: "any" },
+        { url: "/favicon-32x32.png", type: "image/png", sizes: "32x32" },
+      ],
+      apple: [{ url: "/apple-touch-icon.png", type: "image/png", sizes: "180x180" }],
+    },
     openGraph: {
       title: "羽见千年｜金沙沉浸式数字体验",
       description: "跟随曦羽飞越自然、文明与记忆，进入金沙文明的数字旅程。",

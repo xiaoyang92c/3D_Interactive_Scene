@@ -66,6 +66,9 @@ const SCENE_MOTIONS: Record<string, SceneMotion> = {
   "sunbird-fragment": "rotate-z-float",
   "civilization-gate": "static",
 };
+const HIDDEN_SCENE_NODES: Record<string, ReadonlySet<string>> = {
+  "civilization-gate": new Set(["tripo_node_bbcc85b6-3ad8-422b-b677-e2766067ee58"]),
+};
 const LEGACY_DEFAULT_POSITIONS: Record<string, Vector3Tuple> = {
   cave: [0, -0.4, -10],
   "ancient-tree": [-2.6, -0.5, -52],
@@ -201,7 +204,7 @@ function useBoostSound(active: boolean, muted: boolean, effectsVolume: number) {
   useEffect(() => {
     const track = new Audio("/audio/boost-wind.mp3");
     track.loop = true;
-    track.preload = "none";
+    track.preload = "metadata";
     track.volume = 1;
     player.current = track;
     return () => {
@@ -944,8 +947,9 @@ function SceneModel({ asset, transform, quality, editing, selected, onSelect, re
       loader.load(modelUrl, (gltf) => {
         loaded = gltf.scene;
         const removable: THREE.Object3D[] = [];
+        const hiddenNodes = HIDDEN_SCENE_NODES[asset.id];
         loaded.traverse((object) => {
-          if (object instanceof THREE.Light || object instanceof THREE.Camera) removable.push(object);
+          if (object instanceof THREE.Light || object instanceof THREE.Camera || hiddenNodes?.has(object.name)) removable.push(object);
           if (!(object instanceof THREE.Mesh)) return;
           object.frustumCulled = true;
           object.castShadow = false;
@@ -2185,7 +2189,7 @@ class CoreAssetBoundary extends Component<{ children: ReactNode; onError: Critic
   }
 }
 
-function JinshaExperienceCore({ initialPrefetchEnabled, onCriticalAssetReady, onCriticalAssetProgress, onCriticalAssetError }: { initialPrefetchEnabled: boolean; onCriticalAssetReady: CriticalAssetReporter; onCriticalAssetProgress: CriticalAssetProgressReporter; onCriticalAssetError: CriticalAssetErrorReporter }) {
+function JinshaExperienceCore({ initialPrefetchEnabled, initialRevealReady, onCriticalAssetReady, onCriticalAssetProgress, onCriticalAssetError }: { initialPrefetchEnabled: boolean; initialRevealReady: boolean; onCriticalAssetReady: CriticalAssetReporter; onCriticalAssetProgress: CriticalAssetProgressReporter; onCriticalAssetError: CriticalAssetErrorReporter }) {
   const experienceRef = useRef<HTMLElement>(null);
   const [entered, setEntered] = useState(false);
   const [entering, setEntering] = useState(false);
@@ -2240,6 +2244,7 @@ function JinshaExperienceCore({ initialPrefetchEnabled, onCriticalAssetReady, on
   });
   const controls = useRef<Controls>({ left: false, right: false, up: false, down: false, boost: false, touchX: 0, touchY: 0 });
   const touchDrag = useRef({ pointerId: -1, startX: 0, startY: 0 });
+  const ctrlShortcut = useRef({ pressed: false, chord: false });
   const audio = useAmbientSound(audioMix.master, audioMix.background);
   const effectsVolume = audioMix.master * audioMix.effects;
   const startBoostAudio = useBoostSound(boosting && cruising && entered && !paused && !editing && !telemetry.finished, audio.muted, effectsVolume);
@@ -2326,6 +2331,56 @@ function JinshaExperienceCore({ initialPrefetchEnabled, onCriticalAssetReady, on
     window.addEventListener("keydown", toggleEditor);
     return () => window.removeEventListener("keydown", toggleEditor);
   }, [activeArtifact?.id, entered, sceneTransforms, telemetry.progress]);
+
+  useEffect(() => {
+    const desktopPointer = window.matchMedia("(pointer: fine)").matches && window.innerWidth > 720;
+    if (!desktopPointer) return;
+
+    const toggleFullscreen = async () => {
+      const fullscreenDocument = document as Document & {
+        webkitFullscreenElement?: Element | null;
+        webkitExitFullscreen?: () => Promise<void> | void;
+      };
+      const fullscreenRoot = document.documentElement as HTMLElement & {
+        webkitRequestFullscreen?: () => Promise<void> | void;
+      };
+      try {
+        if (fullscreenDocument.fullscreenElement || fullscreenDocument.webkitFullscreenElement) {
+          if (fullscreenDocument.exitFullscreen) await fullscreenDocument.exitFullscreen();
+          else await fullscreenDocument.webkitExitFullscreen?.();
+        } else if (fullscreenRoot.requestFullscreen) {
+          await fullscreenRoot.requestFullscreen();
+        } else {
+          await fullscreenRoot.webkitRequestFullscreen?.();
+        }
+      } catch {
+        // Browsers can reject fullscreen when the page is embedded or permission is disabled.
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      const isControl = event.code === "ControlLeft" || event.code === "ControlRight";
+      if (isControl) {
+        if (!event.repeat) ctrlShortcut.current = { pressed: true, chord: false };
+        return;
+      }
+      if (ctrlShortcut.current.pressed || event.ctrlKey) ctrlShortcut.current.chord = true;
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.code !== "ControlLeft" && event.code !== "ControlRight") return;
+      const shouldToggle = ctrlShortcut.current.pressed && !ctrlShortcut.current.chord;
+      ctrlShortcut.current = { pressed: false, chord: false };
+      if (shouldToggle) void toggleFullscreen();
+    };
+    const resetShortcut = () => { ctrlShortcut.current = { pressed: false, chord: false }; };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", resetShortcut);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", resetShortcut);
+    };
+  }, []);
 
   const toggleCruising = useCallback(() => {
     const next = !cruising;
@@ -2429,6 +2484,7 @@ function JinshaExperienceCore({ initialPrefetchEnabled, onCriticalAssetReady, on
   const enterExperience = () => {
     if (entering || entered) return;
     audio.start();
+    startBoostAudio();
     spatialAudio.start();
     setCruising(false);
     setPauseClosing(false);
@@ -2463,6 +2519,8 @@ function JinshaExperienceCore({ initialPrefetchEnabled, onCriticalAssetReady, on
     const duration = reduceMotion ? 0.01 : 0.72;
     const offset = reduceMotion ? 0 : 20;
     const timeline = gsap.timeline({ defaults: { duration, ease: "power3.out" } });
+
+    if (!initialRevealReady && !entered) return;
 
     if (entering && !entered) {
       const swapScene = contextSafe(() => setEntered(true));
@@ -2504,7 +2562,7 @@ function JinshaExperienceCore({ initialPrefetchEnabled, onCriticalAssetReady, on
       .fromTo(".top-actions button", { autoAlpha: 0, y: -offset, rotationX: reduceMotion ? 0 : -14 }, { autoAlpha: 1, y: 0, rotationX: 0, stagger: 0.1 }, 0.2)
       .fromTo(".flight-dock", { autoAlpha: 0, y: offset }, { autoAlpha: 1, y: 0, duration: reduceMotion ? 0.01 : 0.9 }, 0.38);
     timeline.fromTo(".touch-controls", { autoAlpha: 0, y: offset }, { autoAlpha: 1, y: 0 }, 0.48);
-  }, { scope: experienceRef, dependencies: [entered, entering, resetKey], revertOnUpdate: true });
+  }, { scope: experienceRef, dependencies: [entered, entering, initialRevealReady, resetKey], revertOnUpdate: true });
 
   useGSAP(() => {
     const prompt = experienceRef.current?.querySelector(".flight-prompt");
@@ -2629,7 +2687,7 @@ function JinshaExperienceCore({ initialPrefetchEnabled, onCriticalAssetReady, on
   }, { scope: experienceRef, dependencies: [paused, pauseClosing, telemetry.finished], revertOnUpdate: true });
 
   return (
-    <main ref={experienceRef} className={`experience quality-${quality} stage-${telemetry.stage + 1} ${entered ? "is-running" : "is-intro"} ${entering ? "is-entering" : ""} ${editing ? "is-editing" : ""} ${boosting && cruising && entered && !paused && !editing ? "is-boosting" : ""} ${!cruising && entered ? "is-stopped" : ""}`}>
+    <main ref={experienceRef} className={`experience quality-${quality} stage-${telemetry.stage + 1} ${entered ? "is-running" : "is-intro"} ${!initialRevealReady && !entered ? "is-preloading" : ""} ${entering ? "is-entering" : ""} ${editing ? "is-editing" : ""} ${boosting && cruising && entered && !paused && !editing ? "is-boosting" : ""} ${!cruising && entered ? "is-stopped" : ""}`}>
       <div className="scene" aria-label="羽见千年三维体验场景">
         <CoreAssetBoundary onError={onCriticalAssetError}>
           <Canvas camera={{ position: [0, 2.6, 11], fov: 58, near: 0.02, far: 520 }} dpr={renderQuality === "high" ? [0.9, 1.35] : [0.6, 0.85]} gl={{ antialias: quality === "high", alpha: false, stencil: false, powerPreference: "high-performance" }} onCreated={() => onCriticalAssetReady("renderer")}>
@@ -2756,7 +2814,7 @@ function JinshaExperienceCore({ initialPrefetchEnabled, onCriticalAssetReady, on
           aria-live="polite"
         ><span>曦羽</span><em className="dialogue-line">“{renderedArtifact.voice}”</em></blockquote>}
         <footer className="flight-dock">
-          <div className="control-legend"><span><kbd>A</kbd><kbd>D</kbd> 左右</span><span><kbd>W</kbd><kbd>S</kbd> 升降</span><span><kbd className="wide-key">Shift</kbd> 疾飞</span><span><kbd className="wide-key">Space</kbd> {cruising ? "停下" : "前进"}</span></div>
+          <div className="control-legend"><span><kbd>A</kbd><kbd>D</kbd> 左右</span><span><kbd>W</kbd><kbd>S</kbd> 升降</span><span><kbd className="wide-key">Shift</kbd> 疾飞</span><span><kbd className="wide-key">Space</kbd> {cruising ? "停下" : "前进"}</span><span><kbd className="wide-key">Ctrl</kbd> 全屏</span></div>
           <div className="journey-progress">
             <div className="progress-meta"><span>文明航迹</span><strong>{Math.round(progressPercent)}%</strong></div>
             <div className="progress-track"><i style={{ width: `${progressPercent}%` }} />{STAGES.map((item, index) => item.range[1] / ROUTE_LENGTH * 100).map((position, index) => <b key={position} className={telemetry.stage >= index ? "is-passed" : ""} style={{ left: `${position}%` }} />)}</div>
@@ -2961,7 +3019,7 @@ export function JinshaExperience() {
     {compatibilityIssue
       ? <CompatibilityScreen />
       : <>
-        {coreMounted && <JinshaExperienceCore initialPrefetchEnabled={allCriticalAssetsReady} onCriticalAssetReady={reportCriticalAssetReady} onCriticalAssetProgress={reportCriticalAssetProgress} onCriticalAssetError={reportCriticalAssetError} />}
+        {coreMounted && <JinshaExperienceCore initialPrefetchEnabled={allCriticalAssetsReady} initialRevealReady={criticalLeaving || criticalReady} onCriticalAssetReady={reportCriticalAssetReady} onCriticalAssetProgress={reportCriticalAssetProgress} onCriticalAssetError={reportCriticalAssetError} />}
         {!criticalReady && <CriticalLoadingScreen progress={criticalProgress} leaving={criticalLeaving} status={criticalStatus} error={criticalError} onRetry={() => window.location.reload()} />}
       </>}
   </>;
