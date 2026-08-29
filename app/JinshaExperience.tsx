@@ -199,26 +199,53 @@ function useAmbientSound(masterVolume: number, backgroundVolume: number) {
 
 function useBoostSound(active: boolean, muted: boolean, effectsVolume: number) {
   const player = useRef<HTMLAudioElement | null>(null);
-  const fadeFrame = useRef(0);
+  const context = useRef<AudioContext | null>(null);
+  const source = useRef<MediaElementAudioSourceNode | null>(null);
+  const gain = useRef<GainNode | null>(null);
 
   useEffect(() => {
     const track = new Audio("/audio/boost-wind.mp3");
     track.loop = true;
     track.preload = "auto";
     track.volume = 0;
+    track.muted = true;
     player.current = track;
     return () => {
-      window.cancelAnimationFrame(fadeFrame.current);
       track.pause();
       track.src = "";
       player.current = null;
+      source.current?.disconnect();
+      gain.current?.disconnect();
+      source.current = null;
+      gain.current = null;
+      if (context.current) void context.current.close();
+      context.current = null;
     };
   }, []);
 
   const start = useCallback(() => {
     const track = player.current;
     if (!track) return;
-    track.muted = false;
+    if (!context.current) {
+      const AudioContextConstructor = window.AudioContext
+        ?? (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (AudioContextConstructor) {
+        try {
+          const audioContext = new AudioContextConstructor();
+          const mediaSource = audioContext.createMediaElementSource(track);
+          const volumeGain = audioContext.createGain();
+          volumeGain.gain.value = 0;
+          mediaSource.connect(volumeGain).connect(audioContext.destination);
+          context.current = audioContext;
+          source.current = mediaSource;
+          gain.current = volumeGain;
+        } catch {
+          // Fall back to the media element mute flag on restricted mobile browsers.
+        }
+      }
+    }
+    if (context.current?.state === "suspended") void context.current.resume();
+    track.muted = true;
     void track.play().catch(() => undefined);
   }, []);
 
@@ -227,18 +254,16 @@ function useBoostSound(active: boolean, muted: boolean, effectsVolume: number) {
     if (!track) return;
     const audible = active && !muted;
     const targetVolume = audible ? THREE.MathUtils.clamp(0.52 * effectsVolume, 0, 1) : 0;
-    const startVolume = track.volume;
-    const startedAt = performance.now();
-    const duration = targetVolume > startVolume ? 180 : 320;
-    window.cancelAnimationFrame(fadeFrame.current);
     if (audible && track.paused) void track.play().catch(() => undefined);
-    const updateVolume = (now: number) => {
-      const progress = THREE.MathUtils.clamp((now - startedAt) / duration, 0, 1);
-      track.volume = THREE.MathUtils.lerp(startVolume, targetVolume, 1 - Math.pow(1 - progress, 3));
-      if (progress < 1) fadeFrame.current = window.requestAnimationFrame(updateVolume);
-    };
-    fadeFrame.current = window.requestAnimationFrame(updateVolume);
-    return () => window.cancelAnimationFrame(fadeFrame.current);
+    if (gain.current && context.current) {
+      const now = context.current.currentTime;
+      gain.current.gain.cancelScheduledValues(now);
+      gain.current.gain.setTargetAtTime(targetVolume, now, audible ? 0.045 : 0.085);
+      track.muted = muted;
+    } else {
+      track.muted = !audible;
+      track.volume = targetVolume;
+    }
   }, [active, effectsVolume, muted]);
 
   return start;
@@ -2460,7 +2485,6 @@ function JinshaExperienceCore({ initialPrefetchEnabled, initialRevealReady, onCr
   const enterExperience = () => {
     if (entering || entered) return;
     audio.start();
-    startBoostAudio();
     spatialAudio.start();
     setCruising(false);
     setPauseClosing(false);
