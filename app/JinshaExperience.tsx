@@ -202,6 +202,7 @@ function useBoostSound(active: boolean, muted: boolean, effectsVolume: number) {
   const context = useRef<AudioContext | null>(null);
   const source = useRef<MediaElementAudioSourceNode | null>(null);
   const gain = useRef<GainNode | null>(null);
+  const hasFadedIn = useRef(false);
 
   useEffect(() => {
     const track = new Audio("/audio/boost-wind.mp3");
@@ -236,6 +237,7 @@ function useBoostSound(active: boolean, muted: boolean, effectsVolume: number) {
           const volumeGain = audioContext.createGain();
           volumeGain.gain.value = 0;
           mediaSource.connect(volumeGain).connect(audioContext.destination);
+          track.volume = 1;
           context.current = audioContext;
           source.current = mediaSource;
           gain.current = volumeGain;
@@ -258,7 +260,14 @@ function useBoostSound(active: boolean, muted: boolean, effectsVolume: number) {
     if (gain.current && context.current) {
       const now = context.current.currentTime;
       gain.current.gain.cancelScheduledValues(now);
-      gain.current.gain.setTargetAtTime(targetVolume, now, audible ? 0.045 : 0.085);
+      gain.current.gain.setValueAtTime(gain.current.gain.value, now);
+      if (audible) {
+        const fadeInDuration = hasFadedIn.current ? 0.34 : 0.68;
+        gain.current.gain.linearRampToValueAtTime(targetVolume, now + fadeInDuration);
+        hasFadedIn.current = true;
+      } else {
+        gain.current.gain.setTargetAtTime(0, now, 0.1);
+      }
       track.muted = muted;
     } else {
       track.muted = !audible;
